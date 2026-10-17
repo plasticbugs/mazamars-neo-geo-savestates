@@ -79,7 +79,8 @@ fx68k FX68K(
 		
 		.DTACKn(nDTACK),
 		
-		.VPAn(~IPL2 | nAS | ~&M68K_ADDR[23:4]), //VPA must be fired only in IACK cycle! (NeoGeo doesn't use FC)
+		.VPAn(nAS | ~&M68K_ADDR[23:4]), //VPA must be fired only in IACK cycle! (NeoGeo doesn't use FC)
+				// Autovector every level, the savestates' level 7 included (IPL2 was always 1 here)
 		.BERRn(1'b1),
 		
 		.IPL0n(IPL0),
