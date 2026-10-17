@@ -53,9 +53,6 @@ module ss_m68k
 
 	localparam [23:0] STUB_BASE = 24'hE00000;
 
-	reg [15:0] stub_rom [0:511];
-	initial $readmemh("ss68k_stub.hex", stub_rom);
-
 	wire region_e	= (M68K_ADDR[23:20] == 4'hE);
 	wire is_win		= region_e & M68K_ADDR[19];
 	wire is_ctrl	= region_e & ~M68K_ADDR[19] & (M68K_ADDR[18:1] == 18'h3FF80);
@@ -71,8 +68,8 @@ module ss_m68k
 	reg cyc_started, cyc_ready;
 	reg [15:0] win_q;
 
-	reg [15:0] stub_q;
-	always @(posedge CLK) stub_q <= stub_rom[M68K_ADDR[9:1]];
+	wire [15:0] stub_q;
+	ss68k_stub_rom stub_rom(CLK, M68K_ADDR[9:1], stub_q);
 
 	always @(posedge CLK or negedge nRESET) begin
 		if (~nRESET) begin

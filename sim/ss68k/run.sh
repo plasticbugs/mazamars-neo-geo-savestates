@@ -16,12 +16,12 @@ obj="$root/build/sim/ss68k"
 mkdir -p "$obj/rtl"
 # Verilator's makefile cannot take the space in "NeoGeo Cart": copy the sources.
 cp "$src/cpu/FX68K/microcodes.v" "$src/cpu/FX68K/fx68k.sv" "$src/cpu/FX68K/fx68kAlu.sv" \
-    "$src/cpu/FX68K/uaddrPla.sv" "$src/cpu/cpu_68k.v" "$src/savestate/ss_m68k.sv" "$obj/rtl/"
-cp "$src/savestate/ss68k_stub.hex" "$obj/"
+    "$src/cpu/FX68K/uaddrPla.sv" "$src/cpu/cpu_68k.v" "$src/savestate/ss_m68k.sv" \
+    "$src/savestate/ss68k_stub_rom.sv" "$obj/rtl/"
 cd "$obj"
 verilator --cc --exe --build -j 0 -O2 -Wno-fatal -Wno-lint -Wno-style -Wno-BLKANDNBLK -Wno-UNOPTFLAT --no-assert \
     --top-module tb_ss68k -Mdir . \
-    rtl/microcodes.v rtl/fx68k.sv rtl/fx68kAlu.sv rtl/uaddrPla.sv rtl/cpu_68k.v rtl/ss_m68k.sv \
+    rtl/microcodes.v rtl/fx68k.sv rtl/fx68kAlu.sv rtl/uaddrPla.sv rtl/cpu_68k.v rtl/ss_m68k.sv rtl/ss68k_stub_rom.sv \
     "$here/tb_ss68k.sv" "$here/tb_ss68k.cpp" \
     > build.log 2>&1 || { grep -E "%Error|error:" build.log | head -20; exit 1; }
 ./Vtb_ss68k "$bios" save "$save_at" "$want" state.bin > after_save.txt
