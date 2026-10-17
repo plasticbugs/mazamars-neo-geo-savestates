@@ -198,7 +198,9 @@ module apf_io
 	input  [31:0]		backup_ram_din,
 	
 	output reg [31:0] 	screen_x_pos,
-	output reg [31:0] 	screen_y_pos
+	output reg [31:0] 	screen_y_pos,
+
+	output				osnotify_inmenu		// The Pocket's menu is open (clk_74a domain)
 );
 
 wire reset_n;
@@ -413,6 +415,7 @@ core_bridge_cmd icb (
 	.datatable_data				( datatable_data ),
 	.datatable_q					( datatable_q ),
 
+	.osnotify_inmenu			( osnotify_inmenu )
 );
 
 

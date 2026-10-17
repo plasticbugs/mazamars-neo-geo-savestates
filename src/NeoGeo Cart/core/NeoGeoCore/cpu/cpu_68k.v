@@ -31,20 +31,29 @@ module cpu_68k(
 	output M68K_RW,
 	output FC2, FC1, FC0,
 	output nBG,
-	input nBR, nBGACK
+	input nBR, nBGACK,
+	input HALT			// Stop the CPU between phases (menu, savestates)
 );
 	
 reg  M68K_CLKEN;
-wire EN_PHI1 = M68K_CLKEN;
-wire EN_PHI2 = ~M68K_CLKEN;
+reg  M68K_RUN;
+wire EN_PHI1 = M68K_RUN & M68K_CLKEN;
+wire EN_PHI2 = M68K_RUN & ~M68K_CLKEN;
 
-// Divide-by-2
+// Divide-by-2, left free-running so the CPU keeps its phase against the rest
+// of the 12MHz logic. HALT takes effect after a PHI2 and is released before a
+// PHI1, so the CPU sees its usual phase sequence with a gap in it.
 always @(negedge CLK_24M or negedge nRESET)
 begin
-	if (!nRESET)
+	if (!nRESET) begin
 		M68K_CLKEN <= 1'b0;
-	else
+		M68K_RUN <= 1'b1;
+	end
+	else begin
 		M68K_CLKEN <= ~M68K_CLKEN;
+		if (~M68K_CLKEN)
+			M68K_RUN <= ~HALT;
+	end
 end
 	
 reg reset;

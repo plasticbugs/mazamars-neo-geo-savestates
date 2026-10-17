@@ -64,6 +64,7 @@ module neo_b1(
 	output nHALT,
 	output nRESET,
 	input nRST,
+	input HALT,				// CPUs halted, for the watchdog
 	
 	input [4:0] pixel_mux_change,
 	
@@ -173,7 +174,7 @@ module neo_b1(
 
 
 	// Note: nRESET is sync'd to frame start
-	watchdog WD(nLDS, RW, A23I, A22I, M68K_ADDR_U, BNKB, nHALT, nRESET, nRST);
+	watchdog WD(nLDS, RW, A23I, A22I, M68K_ADDR_U, BNKB, nHALT, nRESET, nRST, HALT);
 	//assign nHALT = 1;
 	//assign nRESET = 1;
 

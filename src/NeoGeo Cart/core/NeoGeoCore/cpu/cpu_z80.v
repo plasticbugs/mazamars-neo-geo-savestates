@@ -25,7 +25,8 @@ module cpu_z80(
 	output reg nIORQ,
 	output nMREQ,
 	output reg nRD, nWR,
-	input nINT, nNMI, nWAIT
+	input nINT, nNMI, nWAIT,
+	input CEN
 );
 
 	wire RFSH_n, MREQ_n;
@@ -34,7 +35,7 @@ module cpu_z80(
 	T80s cpu(
 		.RESET_n(nRESET),
 		.CLK(CLK_4M),
-		.CEN(1),
+		.CEN(CEN),
 		.WAIT_n(nWAIT),
 		.INT_n(nINT),
 		.NMI_n(nNMI),

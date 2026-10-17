@@ -368,6 +368,19 @@ wire [23:0]	V2_offset;
 wire [18:0] SROM_MASK;
 
 wire 			start_system;
+wire			osnotify_inmenu;
+
+// Halt: the Pocket's menu stops the CPUs, the YM2610 and the watchdog, and the
+// game carries on where it was when the menu closes. The video chips keep
+// running, so the picture stays up behind the menu.
+wire			cpu_halt = osnotify_inmenu;
+reg [1:0]	halt_24m_sr, halt_4m_sr, halt_8m_sr;
+always @(posedge CLK_24M) halt_24m_sr <= {halt_24m_sr[0], cpu_halt};
+always @(posedge CLK_4M)  halt_4m_sr  <= {halt_4m_sr[0], cpu_halt};
+always @(posedge CLK_8M)  halt_8m_sr  <= {halt_8m_sr[0], cpu_halt};
+wire			HALT_24M = halt_24m_sr[1];
+wire			HALT_4M  = halt_4m_sr[1];
+wire			HALT_8M  = halt_8m_sr[1];
 
 wire [31:0]	screen_x_pos;
 wire [31:0]	screen_y_pos;
@@ -473,7 +486,9 @@ apf_io apf_io
 	.backup_ram_din			(backup_ram_din),
 	
 	.screen_x_pos				(screen_x_pos),
-	.screen_y_pos				(screen_y_pos)
+	.screen_y_pos				(screen_y_pos),
+
+	.osnotify_inmenu			(osnotify_inmenu)
 
 );
 
@@ -891,7 +906,8 @@ cpu_68k M68KCPU(
 	.FC0				(FC0),
 	.nBG				(nBG), 
 	.nBR				(nBR), 
-	.nBGACK			(nBGACK)
+	.nBGACK			(nBGACK),
+	.HALT				(HALT_24M)
 );
 
 always @(posedge CLK_24M) begin
@@ -1321,7 +1337,8 @@ cpu_z80 Z80CPU(
 	.nWR		(nSDWR),
 	.nINT		(nZ80INT), 
 	.nNMI		(nZ80NMI), 
-	.nWAIT	(z80_ready)
+	.nWAIT	(z80_ready),
+	.CEN		(~HALT_4M)
 );
 
 wire [19:0] ADPCMA_ADDR;
@@ -1435,7 +1452,7 @@ wire [7:0] YM2610_DOUT;
 jt10 YM2610(
 	.rst					(~nRESET_WD),
 	.clk					(CLK_8M), 
-	.cen					(&{ADPCMA_DATA_READY, ADPCMB_DATA_READY}),
+	.cen					(&{ADPCMA_DATA_READY, ADPCMB_DATA_READY, ~HALT_8M}),
 	.addr					(SDA[1:0]),
 	.din					(SDD_OUT), 
 	.dout					(YM2610_DOUT),
@@ -1545,6 +1562,7 @@ neo_b1 B1(
 	.EN_FIX			(FIX_EN),
 	.nRST				(nRESET),
 	.nRESET			(nRESET_WD),
+	.HALT				(HALT_24M),
 	.pixel_mux_change	(pixel_mux_change)
 );
 

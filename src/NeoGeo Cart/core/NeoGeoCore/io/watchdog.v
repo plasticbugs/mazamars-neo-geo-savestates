@@ -22,7 +22,8 @@ module watchdog(
 	input WDCLK,
 	output nHALT,
 	output nRESET,
-	input nRST
+	input nRST,
+	input HALT				// CPUs halted: the 68k cannot kick, so don't count
 );
 
 	reg [3:0] WDCNT;
@@ -49,7 +50,7 @@ module watchdog(
 			WDCNT <= 4'b0000;
 		else if (!nRST)
 			WDCNT <= 4'b1000;
-		else
+		else if (!HALT)
 			WDCNT <= WDCNT + 1'b1;
 	end
 
