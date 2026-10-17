@@ -1,0 +1,18 @@
+`verilator_config
+// What tb_ssz80.cpp reads and writes directly
+public_flat_rw -module "tb_ssz80" -var "rom"
+public_flat_rw -module "tb_ssz80" -var "rom_mask"
+public_flat_rw -module "tb_ssz80" -var "cmd_latch"
+public_flat_rw -module "tb_ssz80" -var "rep_latch"
+public_flat_rw -module "zmc" -var "WINDOW_*"
+public_flat_rw -module "z80ctrl" -var "nNMI_EN"
+public_flat_rw -module "ss_dpram_2clk" -var "memory"
+// Debug: ss_z80's state, for SS_PROGRESS traces
+public_flat_rd -module "ss_z80" -var "state"
+public_flat_rd -module "ss_z80" -var "fetch_q"
+public_flat_rd -module "ss_z80" -var "fetch_r"
+public_flat_rd -module "ss_z80" -var "last_prefix"
+public_flat_rd -module "ss_z80" -var "req_s"
+public_flat_rd -module "ss_z80" -var "pend"
+public_flat_rd -module "ss_z80" -var "in_nmi"
+public_flat_rd -module "ss_z80" -var "nmi_wait"
