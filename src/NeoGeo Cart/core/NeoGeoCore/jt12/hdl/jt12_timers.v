@@ -39,7 +39,11 @@ module jt12_timers(
   output 	 	flag_A,
   output 	 	flag_B,
   output		overflow_A,
-  output 	 	irq_n
+  output 	 	irq_n,
+  // Savestates: {timer B, timer A}, each {flag, counter, prescaler}
+  output [33:0]	ss_q,
+  input			ss_load,
+  input  [33:0]	ss_d
 );
 
 assign irq_n = ~( (flag_A&enable_irq_A) | (flag_B&enable_irq_B) );
@@ -53,7 +57,10 @@ timer_A(
 	.load		( load_A   	),
 	.clr_flag   ( clr_flag_A),
 	.flag		( flag_A	),
-	.overflow	( overflow_A)
+	.overflow	( overflow_A),
+	.ss_q		( ss_q[15:0] ),
+	.ss_load	( ss_load	),
+	.ss_d		( ss_d[15:0] )
 );
 
 jt12_timer #(.mult_width(9), .mult_max(384), .counter_width(8)) 
@@ -65,7 +72,10 @@ timer_B(
 	.load		( load_B   	),
 	.clr_flag   ( clr_flag_B),
 	.flag		( flag_B	),
-	.overflow	(			)
+	.overflow	(			),
+	.ss_q		( ss_q[33:16] ),
+	.ss_load	( ss_load	),
+	.ss_d		( ss_d[33:16] )
 );
 
 endmodule
@@ -79,14 +89,23 @@ module jt12_timer #(parameter counter_width = 10, mult_width=5, mult_max=4 )
 	input	load,
 	input	clr_flag,
 	output reg flag,
-	output reg overflow
+	output reg overflow,
+	output [counter_width+mult_width:0] ss_q,
+	input	ss_load,
+	input	[counter_width+mult_width:0] ss_d
 );
 
 reg [   mult_width-1:0] mult;
 reg [counter_width-1:0] cnt;
 
+assign ss_q = { flag, cnt, mult };
+
 always@(posedge clk)
-	if( clr_flag || rst)
+	if( rst )
+		flag <= 1'b0;
+	else if( ss_load )
+		flag <= ss_d[counter_width+mult_width];
+	else if( clr_flag )
 		flag <= 1'b0;
 	else if(overflow) flag<=1'b1;
 
@@ -107,6 +126,8 @@ always @(posedge clk)
 	  mult <= { (mult_width){1'b0} };
 	  cnt  <= start_value;
 	end
+	else if( ss_load )
+	  { cnt, mult } <= ss_d[counter_width+mult_width-1:0];
 	else if( clk_en )
 	  { cnt, mult } <= overflow ? init : next;
 

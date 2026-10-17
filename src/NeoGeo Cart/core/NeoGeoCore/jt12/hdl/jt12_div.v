@@ -26,7 +26,13 @@ module jt12_div(
     output  reg     clk_en_ssg,
     output  reg     clk_en_666,  // 666 kHz
     output  reg     clk_en_111,  // 111 kHz
-    output  reg     clk_en_55    //  55 kHz
+    output  reg     clk_en_55,   //  55 kHz
+    // Savestates: {clk_en, cen_int, opn_cnt}. ss_load loads the count on a
+    // rising edge, ss_load_n the enables on the falling edge after it
+    output  [5:0]   ss_q,
+    input           ss_load,
+    input           ss_load_n,
+    input   [5:0]   ss_d
 );
 
 parameter use_ssg=0;
@@ -99,7 +105,13 @@ always @(negedge clk) begin
     clk_en_111 <= cen & cen_adpcm_int & cen_adpcm3_int; 
     clk_en_55  <= cen & cen_adpcm_int & cen_adpcm3_int & cen_55_int;
     `endif
+    if( ss_load_n ) begin
+        cen_int <= ss_d[4];
+        clk_en  <= ss_d[5];
+    end
 end
+
+assign ss_q = { clk_en, cen_int, opn_cnt };
 
 // Div/2
 always @(posedge clk)
@@ -109,7 +121,9 @@ always @(posedge clk)
 
 // OPN
 always @(posedge clk)
-    if( cen ) begin
+    if( ss_load )
+        opn_cnt <= ss_d[3:0];
+    else if( cen ) begin
         if( opn_cnt == opn_pres ) begin
             opn_cnt <= 4'd0;  
         end

@@ -52,7 +52,11 @@ module jt10(
     output  signed  [15:0] snd_left,
     output          snd_sample,
     input   [3:0]   snd_enable,
-    input   [5:0]   ch_enable
+    input   [5:0]   ch_enable,
+    // Savestates: see jt12_top
+    output  [39:0]  ss_q,
+    input           ss_load,
+    input   [39:0]  ss_d
 );
 
 // Uses 6 FM channels but only 4 are outputted
@@ -92,6 +96,9 @@ u_jt12(
     .snd_sample     ( snd_sample   ),
     .snd_enable     ( snd_enable   ),
     .ch_enable      ( ch_enable    ),
+    .ss_q           ( ss_q         ),
+    .ss_load        ( ss_load      ),
+    .ss_d           ( ss_d         ),
 
     // unused pins
     .en_hifi_pcm    ( 1'b0         ) // used only on YM2612 mode

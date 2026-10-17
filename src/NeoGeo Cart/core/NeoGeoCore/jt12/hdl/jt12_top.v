@@ -61,8 +61,17 @@ module jt12_top (
     output  signed  [15:0] snd_left,  // FM+PSG
     output                 snd_sample,
     input   [3:0]          snd_enable,
-    input   [5:0]          ch_enable
+    input   [5:0]          ch_enable,
+    // Savestates: what decides when the timers count and raise IRQ,
+    // {timers (jt12_timers), divider (jt12_div)}. ss_load for one clock
+    // sets it; everything else in the chip is left running
+    output  [39:0]         ss_q,
+    input                  ss_load,
+    input   [39:0]         ss_d
 );
+
+reg ss_load_n = 1'b0;           // the divider's falling-edge half of a load
+always @(posedge clk) ss_load_n <= ss_load;
 
 // parameters to select the features for each chip type
 // defaults to YM2612
@@ -307,6 +316,10 @@ jt12_mmr #(.use_ssg(use_ssg),.num_ch(num_ch),.use_pcm(use_pcm), .use_adpcm(use_a
     .clk_en_666 ( clk_en_666),
     .clk_en_111 ( clk_en_111),
     .clk_en_55  ( clk_en_55 ),
+    .ss_div_q   ( ss_q[5:0] ),
+    .ss_div_load( ss_load   ),
+    .ss_div_load_n( ss_load_n ),
+    .ss_div_d   ( ss_d[5:0] ),
     .din        ( din       ),
     .write      ( write     ),
     .addr       ( addr      ),
@@ -421,7 +434,10 @@ jt12_timers u_timers(
     .flag_A     ( flag_A        ),
     .flag_B     ( flag_B        ),
     .overflow_A ( overflow_A    ),
-    .irq_n      ( irq_n         )
+    .irq_n      ( irq_n         ),
+    .ss_q       ( ss_q[39:6]    ),
+    .ss_load    ( ss_load       ),
+    .ss_d       ( ss_d[39:6]    )
 );
 
 // YM2203 does not have LFO

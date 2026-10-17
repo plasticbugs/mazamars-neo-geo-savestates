@@ -30,6 +30,10 @@ module jt12_mmr(
     output          clk_en_666,
     output          clk_en_111,
     output          clk_en_55,
+    output  [5:0]   ss_div_q,   // savestates, see jt12_div
+    input           ss_div_load,
+    input           ss_div_load_n,
+    input   [5:0]   ss_div_d,
     input   [7:0]   din,
     input           write,
     input   [1:0]   addr,
@@ -141,7 +145,11 @@ jt12_div #(.use_ssg(use_ssg)) u_div (
     .clk_en_ssg     ( clk_en_ssg      ),
     .clk_en_666     ( clk_en_666      ),
     .clk_en_111     ( clk_en_111      ),
-    .clk_en_55      ( clk_en_55       )
+    .clk_en_55      ( clk_en_55       ),
+    .ss_q           ( ss_div_q        ),
+    .ss_load        ( ss_div_load     ),
+    .ss_load_n      ( ss_div_load_n   ),
+    .ss_d           ( ss_div_d        )
 );
 
 reg [7:0]   selected_register;
