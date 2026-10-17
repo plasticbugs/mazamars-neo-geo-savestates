@@ -49,10 +49,14 @@ the stub writes the snapshot to a buffer and reads it back.
   MAME's map mirrors palette RAM over all of 0x400000-0x7FFFFF. Above
   0xE00000 nothing is mapped in MAME (MVS or AES) and NEO-C1 decodes no zone
   (A21=1 with A23/A22 set).
-- **The buffer**: the window is backed by free CRAM0 (0x10A20000-0x10BFFFFF
-  in bridge address space), reached through CRAM0's word port, which the
-  Pocket also uses to read and write the save. During gameplay that port is
-  idle, so the engine takes it while a stub runs.
+- **The buffer**: the window is backed by 512 KB of free CRAM0 at 0xA80000
+  (`ss_mem.sv`), through a port of its own in `cram_16bit` (priority after
+  the Pocket's word port, before the 68k, fix layer and Z80). The stub's
+  window crosses from CLK_24M to clk_sys as a toggle handshake.
+- **Leaving**: the stub's CTRL write ends the save or load, but the 68k
+  keeps running (`run`) until the RTE's first stack pop, outside 0xE00000.
+  Halted between the write and the RTE, a new request would be taken there,
+  nested inside the stub (the bench caught this: SSP 6 bytes low).
 
 ## Z80 and YM2610
 
@@ -66,17 +70,34 @@ the stub writes the snapshot to a buffer and reads it back.
 
 ## Pocket interface
 
-`savestate_addr` = 0x10A20000, `savestate_size` = the snapshot's size. On
-"save" the core runs both stubs and answers OK; the Pocket then reads the
-buffer. On "load" the Pocket has written the buffer; the core checks the
-header (magic, game, BIOS, MVS/AES, version) and runs the load stubs, or
-answers error. The CPUs are halted around all of it (`cpu_halt`, step 1).
+`savestate.sv`. `savestate_addr` = 0x80000000 (the bridge's 0x8xxxxxxx is
+otherwise unused), `savestate_size` = `maxloadsize` = 0x80000, the whole
+buffer. Bridge word n is {window word 2n, window word 2n+1}, so the file is
+the window in 68k byte order. On "save" (0xA0) the core acks, is busy while
+the stub runs, then answers OK; the Pocket then reads the buffer. On "load"
+(0xA4) the Pocket has written the buffer; the core runs the load stub and
+answers OK. A stub that has not finished after 1.8 s answers error (the 68k
+held in reset, say). The CPUs are halted around all of it (`cpu_halt`,
+step 1); only the 68k runs, for the stub. To do: a header (magic, game,
+BIOS, MVS/AES, version) checked on load.
+
+Bridge reads are pipelined (Analogue: the core "has up until the next read
+strobe to drive bridge_rd_data"). Each read starts a prefetch of the next
+word, so sequential reads are answered at once. A word costs two 16-bit
+CRAM reads; in `sim/savestate` with a 12-clock PSRAM model that keeps up
+with a transaction every 30 clk_74a cycles (about 10 MB/s) and fails at 25;
+Analogue gives the bridge as "a few megabytes per second". Not measured on
+hardware.
 
 ## Verification
 
-1. 68k round trip on the CPU bench (`sim/cpu68k_halt`, extended): run code,
-   save at a random instruction, run on; in a fresh run, load and run on.
-   The bus traces after the two `RTE`s must be identical.
+1. 68k round trip on the CPU bench (`sim/ss68k`): run code, save at an
+   instruction, run on; in a fresh run, load and run on. The bus traces after
+   the two `RTE`s must be identical; and a save straight after a load must
+   give the same snapshot. Then the same end to end (`sim/savestate`): the
+   menu's halt, the Pocket's commands and bridge (pipelined reads), the CDC,
+   `cram_16bit` and a PSRAM model, every bridge word checked against the
+   buffer, and the buffer scribbled over between the load and the save.
 2. The same for the Z80.
 3. The whole machine in MAME terms: the core's frames after a load against
    the frames after the save, and against MAME with the same inputs where it

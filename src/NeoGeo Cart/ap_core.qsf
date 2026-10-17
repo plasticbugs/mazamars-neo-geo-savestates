@@ -779,6 +779,10 @@ set_global_assignment -name QIP_FILE core/NeoGeoCore/cpu/T80/T80.qip
 set_global_assignment -name VERILOG_FILE core/NeoGeoCore/cpu/cpu_z80.v
 set_global_assignment -name VERILOG_FILE core/NeoGeoCore/cpu/cpu_68k.v
 set_global_assignment -name SYSTEMVERILOG_FILE core/Neogeo.sv
+set_global_assignment -name SYSTEMVERILOG_FILE core/NeoGeoCore/savestate/savestate.sv
+set_global_assignment -name SYSTEMVERILOG_FILE core/NeoGeoCore/savestate/ss_m68k.sv
+set_global_assignment -name SYSTEMVERILOG_FILE core/NeoGeoCore/savestate/ss68k_stub_rom.sv
+set_global_assignment -name SYSTEMVERILOG_FILE core/NeoGeoCore/savestate/ss_mem.sv
 set_global_assignment -name QIP_FILE pll_cfg.qip
 set_global_assignment -name SIP_FILE pll_cfg.sip
 set_global_assignment -name VERILOG_FILE core/i2s.v

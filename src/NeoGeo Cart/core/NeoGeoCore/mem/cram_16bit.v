@@ -49,6 +49,17 @@ module cram_16bit
 	output reg  [31:0]	word_q,
 	output reg				word_busy,
 	
+		// Savestate buffer (ss_mem): 512 KB at 0xA80000, 16-bit words.
+		// ss_rd/ss_wr pulse once with the rest held; ss_ack pulses when done.
+
+	input						ss_rd,
+	input						ss_wr,
+	input			[18:1]	ss_addr,
+	input			[15:0]	ss_data,
+	input			[1:0]		ss_be,			// {upper, lower}
+	output reg	[15:0]	ss_q,
+	output reg				ss_ack,
+	
 		// Program ROM controls
 
 	input      [20:1] 	M68K_ADDR,
@@ -115,6 +126,7 @@ module cram_16bit
 		32'h1080_0000 - 109F-FFFF (2Mbytes for Program rom)
 		32'h10A0_0000 - 10A1-FFFF (128Kbyte for Bios)
 		
+		32'h10A8_0000 - 10AF-FFFF (512Kbyte savestate buffer, ss_* port only)
 		32'h10F8_0000 - 10FF-FFFF (512Kbyte for the Z80 RAM)
 	
 	
@@ -181,6 +193,8 @@ module cram_16bit
 	reg z80_ready_reg;
 	
 	reg 			REQ_SROM_REQ;
+	reg			REQ_SS_REQ;
+	reg			ss_wr_reg;
 	reg 			S_LATCH12reg;
 	reg 			PCK2_reg_1, PCK2_reg_2, PCK2_reg_3;
 	reg [15:0]	PBUS_REG;
@@ -225,10 +239,17 @@ module cram_16bit
 			PCK2_reg_1					<= 1'b0;
 			PCK2_reg_2					<= 1'b0;
 			PCK2_reg_3					<= 1'b0;
+			REQ_SS_REQ				<= 1'b0;
+			ss_ack					<= 1'b0;
 		end
 		else begin
 			
 			Sln_xferAck_reg 		<= Sln_xferAck;
+			ss_ack					<= 1'b0;
+			if (ss_rd | ss_wr) begin				// not gated by nRESET: the APF loads it too
+				REQ_SS_REQ							<= 1'b1;
+				ss_wr_reg							<= ss_wr;
+			end
 			
 			S_LATCH12reg 			<= PBUS_REG[12];
 			PCK2_reg_1				<= PCK2;
@@ -307,6 +328,18 @@ module cram_16bit
 						RAM_ADDR 			<= word_addr; // Add the address MUX in the waiter
 						OPB_32Bit			<= word_32bit;
 					end			
+					// Savestate buffer
+					else if (REQ_SS_REQ) begin
+						RAM_READ 			<= ~ss_wr_reg;
+						RAM_Access 			<= 1'b1;
+						word_busy 			<= 1'b1;
+						ram_state 			<= ss_wr_reg ? write_8bit : read_16bit;
+						channel_read		<= 3'd4;
+						OPB_32Bit			<= 1'b0;
+						OPB_BE 				<= {2{ss_be}};
+						RAM_DATA_WRITE		<= {2{ss_data}};
+						RAM_ADDR 			<= {5'b1010_1, ss_addr, 1'b0};
+					end
 					// 68K cpu access
 					else if(|{REQ_M68K_RD, M68K_RD_REQ}) begin
 						RAM_READ 			<= 1'b1;
@@ -372,6 +405,12 @@ module cram_16bit
 								REQ_SROM_REQ	   <= 1'b0;
 							end
 							
+							3'd4 : begin
+								REQ_SS_REQ			<= 1'b0;
+								ss_q					<= Sln_DBus[15:0];
+								ss_ack				<= 1'b1;
+							end
+							
 							default : begin
 								M68K_RD_REQ		 	<= 1'b0;
 							end
@@ -388,6 +427,10 @@ module cram_16bit
 						word_busy 	<= 1'b0;
 						RAM_Access 	<= 1'b0;
 						M68K_WD_REQ <= 1'b0;
+						if (channel_read == 3'd4) begin
+							REQ_SS_REQ	<= 1'b0;
+							ss_ack		<= 1'b1;
+						end
 					end
 				end
 				

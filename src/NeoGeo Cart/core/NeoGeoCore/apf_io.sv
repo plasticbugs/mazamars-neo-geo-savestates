@@ -200,7 +200,24 @@ module apf_io
 	output reg [31:0] 	screen_x_pos,
 	output reg [31:0] 	screen_y_pos,
 
-	output				osnotify_inmenu		// The Pocket's menu is open (clk_74a domain)
+	output				osnotify_inmenu,		// The Pocket's menu is open (clk_74a domain)
+
+	// Savestates (savestate.sv), clk_74a
+	output				savestate_start,
+	input					savestate_start_ack,
+	input					savestate_start_busy,
+	input					savestate_start_ok,
+	input					savestate_start_err,
+	output				savestate_load,
+	input					savestate_load_ack,
+	input					savestate_load_busy,
+	input					savestate_load_ok,
+	input					savestate_load_err,
+	output	[31:0]	ss_bridge_addr,
+	output				ss_bridge_rd,
+	output				ss_bridge_wr,
+	output	[31:0]	ss_bridge_wr_data,
+	input		[31:0]	ss_bridge_rd_data	// the buffer, at bridge 0x80000000
 );
 
 wire reset_n;
@@ -335,22 +352,17 @@ io_bridge_peripheral ibs (
 
 	wire				dataslot_allcomplete; // this tells the core that everything is loaded and we can now run
 
-	wire				savestate_supported;
-	wire	[31:0]	savestate_addr;
-	wire	[31:0]	savestate_size;
-	wire	[31:0]	savestate_maxloadsize;
+	// The savestate is the 512 KB buffer of ss_mem, which takes the bridge's
+	// 0x8xxxxxxx
+	wire				savestate_supported		= 1'b1;
+	wire	[31:0]	savestate_addr				= 32'h80000000;
+	wire	[31:0]	savestate_size				= 32'h00080000;
+	wire	[31:0]	savestate_maxloadsize	= 32'h00080000;
 
-	wire				savestate_start;
-	wire				savestate_start_ack;
-	wire				savestate_start_busy;
-	wire				savestate_start_ok;
-	wire				savestate_start_err;
-
-	wire				savestate_load;
-	wire				savestate_load_ack;
-	wire				savestate_load_busy;
-	wire				savestate_load_ok;
-	wire				savestate_load_err;
+	assign ss_bridge_addr		= bridge_addr;
+	assign ss_bridge_rd			= bridge_rd;
+	assign ss_bridge_wr			= bridge_wr;
+	assign ss_bridge_wr_data	= bridge_wr_data;
 
 // bridge target commands
 // synchronous to clk_74a
@@ -766,6 +778,9 @@ always @(*) begin
 	end
 	32'h7xxxxxxx: begin
 		bridge_rd_data <= neogeo_sram_controller_rd_data;
+	end
+	32'h8xxxxxxx: begin
+		bridge_rd_data <= ss_bridge_rd_data;
 	end
 	32'hF0xxxxxx: begin
 		bridge_rd_data 	<= Neogeo_status;

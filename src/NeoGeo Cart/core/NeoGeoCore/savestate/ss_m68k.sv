@@ -24,6 +24,7 @@ module ss_m68k
 	input					load,				// 0 save, 1 load; held while busy
 	output reg			busy,
 	output reg			done,				// pulse: the stub wrote CTRL
+	output				run,				// the CPU must run: busy, then on into the RTE
 
 	// The 68k bus, at the CPU
 	input		[23:1]	M68K_ADDR,
@@ -66,6 +67,12 @@ module ss_m68k
 
 	// One window transfer per bus cycle
 	reg cyc_started, cyc_ready;
+
+	// After CTRL the stub's RTE must start before the CPU may halt: halted
+	// between the write and the RTE, a new request would be taken there, in
+	// the stub. The RTE's first bus cycle is its pop, outside region E.
+	reg tail;
+	assign run = busy | tail;
 	reg [15:0] win_q;
 
 	wire [15:0] stub_q;
@@ -75,6 +82,7 @@ module ss_m68k
 		if (~nRESET) begin
 			busy <= 1'b0;
 			done <= 1'b0;
+			tail <= 1'b0;
 			IPL7 <= 1'b0;
 			vec_pending <= 1'b0;
 			vec_last <= 1'b0;
@@ -92,6 +100,9 @@ module ss_m68k
 				busy <= 1'b1;
 				IPL7 <= 1'b1;
 			end
+
+			if (tail & ~nAS & ~region_e)
+				tail <= 1'b0;						// the RTE's first pop
 
 			if (IPL7 & iack7) begin
 				IPL7 <= 1'b0;
@@ -121,6 +132,7 @@ module ss_m68k
 					cyc_ready <= 1'b1;			// stub, CTRL, vector, idle window
 					if (is_ctrl & ~M68K_RW & busy) begin
 						busy <= 1'b0;
+						tail <= 1'b1;
 						done <= 1'b1;
 					end
 				end

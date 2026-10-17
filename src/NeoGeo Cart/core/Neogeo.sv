@@ -382,6 +382,18 @@ wire			HALT_24M = halt_24m_sr[1];
 wire			HALT_4M  = halt_4m_sr[1];
 wire			HALT_8M  = halt_8m_sr[1];
 
+// Savestates (savestate/savestate.sv)
+wire			savestate_start, savestate_start_ack, savestate_start_busy, savestate_start_ok, savestate_start_err;
+wire			savestate_load, savestate_load_ack, savestate_load_busy, savestate_load_ok, savestate_load_err;
+wire [31:0]	ss_bridge_addr, ss_bridge_wr_data, ss_bridge_rd_data;
+wire			ss_bridge_rd, ss_bridge_wr;
+wire			ss_run_68k, ss_ipl7, ss_din_en, ss_dtack_en, ss_ndtack;
+wire [15:0]	ss_din;
+wire			ss_rd, ss_wr, ss_ack;
+wire [18:1]	ss_addr;
+wire [15:0]	ss_data, ss_q;
+wire [1:0]	ss_be;
+
 wire [31:0]	screen_x_pos;
 wire [31:0]	screen_y_pos;
 wire [2:0]	APF_Video_ratio;
@@ -488,7 +500,23 @@ apf_io apf_io
 	.screen_x_pos				(screen_x_pos),
 	.screen_y_pos				(screen_y_pos),
 
-	.osnotify_inmenu			(osnotify_inmenu)
+	.osnotify_inmenu			(osnotify_inmenu),
+
+	.savestate_start			(savestate_start),
+	.savestate_start_ack		(savestate_start_ack),
+	.savestate_start_busy	(savestate_start_busy),
+	.savestate_start_ok		(savestate_start_ok),
+	.savestate_start_err		(savestate_start_err),
+	.savestate_load			(savestate_load),
+	.savestate_load_ack		(savestate_load_ack),
+	.savestate_load_busy		(savestate_load_busy),
+	.savestate_load_ok		(savestate_load_ok),
+	.savestate_load_err		(savestate_load_err),
+	.ss_bridge_addr			(ss_bridge_addr),
+	.ss_bridge_rd				(ss_bridge_rd),
+	.ss_bridge_wr				(ss_bridge_wr),
+	.ss_bridge_wr_data		(ss_bridge_wr_data),
+	.ss_bridge_rd_data		(ss_bridge_rd_data)
 
 );
 
@@ -746,6 +774,14 @@ cram_16bit CPU68K_z80_RAM_CONTROLLER(
 	.word_q				(cram0_word_q),
 	.word_busy			(cram0_word_busy),
 	
+	.ss_rd				(ss_rd),
+	.ss_wr				(ss_wr),
+	.ss_addr				(ss_addr),
+	.ss_data				(ss_data),
+	.ss_be				(ss_be),
+	.ss_q					(ss_q),
+	.ss_ack				(ss_ack),
+	
 	.nSYSTEM_G			(nSYSTEM_G),
 	.SROM_MASK			(SROM_MASK),
 	.PBUS					(PBUS[15:0]),
@@ -883,9 +919,9 @@ neo_d0 D0(
 //    0     0    1        1    0    1		  1    1    0  Timer
 //    0     0    0        1    0    0		  1    0    0	Cold boot
 //    1     x    x        1    1    1  	  0    1    1	CD vectored IRQ
-wire IPL0_OUT = IPL0;
-wire IPL1_OUT = IPL1;
-wire IPL2_OUT = 1'b1;
+wire IPL0_OUT = IPL0 & ~ss_ipl7;
+wire IPL1_OUT = IPL1 & ~ss_ipl7;
+wire IPL2_OUT = ~ss_ipl7;
 
 cpu_68k M68KCPU(
 	.CLK_24M			(CLK_24M),
@@ -897,7 +933,7 @@ cpu_68k M68KCPU(
 	.nUDS				(nUDS), 
 	.nAS				(nAS), 
 	.M68K_RW			(M68K_RW),
-	.nDTACK			(nDTACK_ADJ),	// nDTACK
+	.nDTACK			(ss_dtack_en ? ss_ndtack : nDTACK_ADJ),	// nDTACK
 	.IPL2				(IPL2_OUT), 
 	.IPL1				(IPL1_OUT), 
 	.IPL0				(IPL0_OUT),
@@ -907,7 +943,53 @@ cpu_68k M68KCPU(
 	.nBG				(nBG), 
 	.nBR				(nBR), 
 	.nBGACK			(nBGACK),
-	.HALT				(HALT_24M)
+	.HALT				(HALT_24M & ~ss_run_68k)
+);
+
+// Savestates: the 68k saves and restores the machine by running a stub,
+// whose bus cycles this answers in place of the rest of the machine
+savestate savestate(
+	.clk_74a					(clk_74a),
+	.clk_sys					(clk_sys),
+	.CLK_24M					(CLK_24M),
+	.nRESET					(nRESET_WD),
+	.savestate_start		(savestate_start),
+	.savestate_start_ack	(savestate_start_ack),
+	.savestate_start_busy(savestate_start_busy),
+	.savestate_start_ok	(savestate_start_ok),
+	.savestate_start_err	(savestate_start_err),
+	.savestate_load		(savestate_load),
+	.savestate_load_ack	(savestate_load_ack),
+	.savestate_load_busy	(savestate_load_busy),
+	.savestate_load_ok	(savestate_load_ok),
+	.savestate_load_err	(savestate_load_err),
+	.M68K_ADDR				(M68K_ADDR),
+	.nAS						(nAS),
+	.M68K_RW					(M68K_RW),
+	.nUDS						(nUDS),
+	.nLDS						(nLDS),
+	.FC2						(FC2),
+	.FC1						(FC1),
+	.FC0						(FC0),
+	.M68K_DOUT				(FX68K_DATAOUT),
+	.run_68k					(ss_run_68k),
+	.IPL7						(ss_ipl7),
+	.DIN_EN					(ss_din_en),
+	.DIN						(ss_din),
+	.DTACK_EN				(ss_dtack_en),
+	.nDTACK					(ss_ndtack),
+	.bridge_addr			(ss_bridge_addr),
+	.bridge_rd				(ss_bridge_rd),
+	.bridge_wr				(ss_bridge_wr),
+	.bridge_wr_data		(ss_bridge_wr_data),
+	.bridge_rd_data		(ss_bridge_rd_data),
+	.ss_rd					(ss_rd),
+	.ss_wr					(ss_wr),
+	.ss_addr					(ss_addr),
+	.ss_data					(ss_data),
+	.ss_be					(ss_be),
+	.ss_q						(ss_q),
+	.ss_ack					(ss_ack)
 );
 
 always @(posedge CLK_24M) begin
@@ -930,7 +1012,7 @@ assign M68K_DATA_BYTE_MASK = (~|{nLDS, nUDS}) ? M68K_DATA :
 										16'h0000;
 
 assign M68K_DATA = M68K_RW ? 16'bzzzzzzzz_zzzzzzzz : FX68K_DATAOUT;
-assign FX68K_DATAIN = M68K_RW ? M68K_DATA_BYTE_MASK : 16'h0000;
+assign FX68K_DATAIN = ss_din_en ? ss_din : M68K_RW ? M68K_DATA_BYTE_MASK : 16'h0000;
 
 // Disable ROM read in PORT zone if the game uses a special chip
 assign M68K_DATA = (nROMOE & nSROMOE & |{nPORTOE, cart_chip, cart_pchip}) ? 16'bzzzzzzzzzzzzzzzz : PROM_DATA;
