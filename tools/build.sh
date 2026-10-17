@@ -11,8 +11,14 @@ set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
 FLOW=${1:-compile}
 case "$FLOW" in
-    map)     CMD="quartus_map --read_settings_files=on ap_core.qpf -c ap_core" ;;
-    compile) CMD="quartus_sh --flow compile ap_core.qpf" ;;
+    map)     CMD="quartus_map --parallel=1 --read_settings_files=on ap_core.qpf -c ap_core" ;;
+    # Synthesis on one thread: its parallel helpers die under x86 emulation
+    # and leave quartus_map waiting on their pipes forever (seen twice, idle
+    # for hours). The fitter and timing keep the .qsf's threads.
+    compile) CMD="quartus_map --parallel=1 --read_settings_files=on ap_core -c ap_core &&
+                  quartus_fit --read_settings_files=on ap_core -c ap_core &&
+                  quartus_asm ap_core -c ap_core &&
+                  quartus_sta ap_core -c ap_core" ;;
     *) echo "usage: $0 [map|compile]"; exit 2 ;;
 esac
 work="$root/build/$FLOW"
@@ -24,7 +30,7 @@ mkdir -p "$work"
 docker run --rm --platform linux/amd64 \
     -v "$work/src/NeoGeo Cart":/build -w /build \
     raetro/quartus:pocket \
-    $CMD
+    sh -c "$CMD"
 if [ "$FLOW" = compile ]; then
     python3 -I - "$work/src/NeoGeo Cart/output_files/ap_core.rbf" "$root/build/Core.rbf_r" <<'EOF'
 import sys
