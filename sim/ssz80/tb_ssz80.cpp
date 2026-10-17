@@ -40,6 +40,7 @@ static uint16_t a = 0;
 static uint8_t d = 0;
 static char kind[3] = "";
 
+
 static void monitor() {
 	int strobe = m->nRD & m->nWR;
 	if (!strobe) {
@@ -241,6 +242,7 @@ int main(int argc, char **argv) {
 	// A falling edge on nRESET: the asynchronous resets (z80ctrl's NMI flop)
 	// act on the edge here, though on the chip they follow the level
 	m->nRESET = 1; m->menu = 0; m->nSDW = 1; m->cmd_in = 0;
+	m->wait_all = getenv("SS_WAIT_ALL") != nullptr;	// RAM reads wait too
 	ticks4(2);
 	m->nRESET = 0;
 	ticks4(100);

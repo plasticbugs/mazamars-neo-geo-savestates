@@ -205,8 +205,11 @@ module ss_z80
 	wire nmi_clear = ~pend & (~in_nmi | (&nmi_wait));
 
 	// T80 takes an opcode at the clock edge where its fetch is first seen
-	// here, so RST 38h has to be answered at once, not from a register
-	wire sub = (state == ENTER) & fetch & ~fetch_r & ~last_prefix & nHALT & nmi_clear;
+	// here, or later after wait states (nWAIT, while a ROM read is fetched),
+	// so RST 38h is answered at once and to the end of the fetch
+	wire sub_start = (state == ENTER) & fetch & ~fetch_r & ~last_prefix & nHALT & nmi_clear;
+	reg sub_r = 1'b0;
+	wire sub = sub_start | (sub_r & fetch);
 
 	assign run = (state != IDLE);
 	assign YM_RUN = run & ~parked;
@@ -263,6 +266,7 @@ module ss_z80
 			cmd_s <= {cmd_s[1:0], cmd_t};
 			fetch_r <= fetch;
 			mem_wr_r <= mem_wr;
+			sub_r <= sub;
 			sdw <= {sdw[0], 1'b0};
 
 			// The NMI's fetch at 0x0066 (outside the stub, where 0x0066 is
@@ -303,7 +307,7 @@ module ss_z80
 				ENTER: begin
 					if (~&nmi_wait) nmi_wait <= nmi_wait + 1'd1;
 					nmi_hold <= nNMI_LINE;		// as it is when the stub starts
-					if (sub) state <= ACTIVE;		// it took RST 38h
+					if (sub_start) state <= ACTIVE;	// it takes RST 38h
 					else if (iack) begin
 						by_int <= 1'b1;
 						state <= ACTIVE;

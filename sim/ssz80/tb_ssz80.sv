@@ -10,6 +10,7 @@ module tb_ssz80(
 	input					CLK_8M,
 	input					nRESET,
 	input					menu,				// halt, as osnotify_inmenu
+	input					wait_all,		// wait states on RAM reads too (a stress)
 
 	// The 68k's sound command: the latch, and the write strobe (nSDW)
 	input		[7:0]		cmd_in,
@@ -62,12 +63,26 @@ module tb_ssz80(
 		.nWR		(nWR),
 		.nINT		(ss_int_force ? 1'b0 : (nZ80INT | ss_int_mask)),
 		.nNMI		(ss_nmi_n),
-		.nWAIT	(1'b1),
+		.nWAIT	(nWAIT),
 		.CEN		(~HALT_4M | ss_run),
 		.nM1		(nM1),
 		.nHALT	(nHALT)
 	);
 	assign DIN = ss_din_en ? ss_din : SDD_IN;
+
+	// Wait states on reads below 0xF800, as cram_16bit's z80_ready makes
+	// them while the M1 ROM comes from PSRAM: 0-3, from the address, so a
+	// run's pattern follows its code (the stub's own fetches included)
+	wire rom_rd = ~nMREQ & ~nRD & ((SDA[15:11] != 5'b11111) | wait_all);
+	wire [1:0] rom_waits = wait_all ? 2'd2 : SDA[1:0] ^ SDA[3:2];
+	reg rom_rd_r = 1'b0;
+	reg [1:0] wait_left = 2'd0;
+	always @(posedge CLK_4M) begin
+		rom_rd_r <= rom_rd;
+		if (rom_rd & ~rom_rd_r) wait_left <= rom_waits;
+		else if (wait_left != 2'd0) wait_left <= wait_left - 1'd1;
+	end
+	wire nWAIT = ~(rom_rd & (rom_rd_r ? (wait_left != 2'd0) : (rom_waits != 2'd0)));
 
 	// The machine's Z80 decode and banks
 	wire nSDZ80R, nSDZ80W, nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1;
