@@ -5,8 +5,11 @@
 // STUB_BASE, so the CPU runs the stub with the game's PC and SR stacked.
 // From then on it answers the stub's own bus cycles:
 //
-//   0xE00000-0xE7FEFF  stub code (512 words, mirrored)
+//   0xE00000-0xE3FFFF  stub code (512 words, mirrored)
+//   0xE40000-0xE4FFFF  slow VRAM, 32K words (the VRAM's second port)
+//   0xE50000-0xE5FFFF  fast VRAM, 2K words, mirrored
 //   0xE7FF00           read: {15'b0, load}.  write: the stub is finished
+//   0xE7FF10-0xE7FF1F  read: SHADOW, 8 words of write-only registers
 //   0xE80000-0xEFFFFF  the window: win_* requests to the savestate buffer
 //
 // It drives the CPU's inputs directly (data in, DTACK, IPL), after the rest
@@ -49,15 +52,33 @@ module ss_m68k
 	output reg [15:0]	win_wdata,
 	output reg [1:0]	win_be,			// {upper, lower}
 	input		[15:0]	win_rdata,
-	input					win_ack			// one pulse per request
+	input					win_ack,			// one pulse per request
+
+	// What the stub cannot read through the machine itself
+	input		[127:0]	SHADOW,			// word n at 0xE7FF10 + 2n
+	output	[14:0]	VRAM_ADDR,		// slow: [14:0], fast: [10:0]
+	output	[15:0]	VRAM_WDATA,
+	output reg			SVRAM_WE,
+	output reg			FVRAM_WE,
+	input		[15:0]	SVRAM_Q,			// one clock after VRAM_ADDR
+	input		[15:0]	FVRAM_Q
 );
 
 	localparam [23:0] STUB_BASE = 24'hE00000;
 
 	wire region_e	= (M68K_ADDR[23:20] == 4'hE);
 	wire is_win		= region_e & M68K_ADDR[19];
-	wire is_ctrl	= region_e & ~M68K_ADDR[19] & (M68K_ADDR[18:1] == 18'h3FF80);
-	wire is_stub	= region_e & ~M68K_ADDR[19] & ~is_ctrl;
+	wire is_stub	= region_e & ~M68K_ADDR[19] & ~M68K_ADDR[18];
+	wire is_vram	= region_e & ~M68K_ADDR[19] & M68K_ADDR[18] & ~M68K_ADDR[17];
+	wire is_fast	= M68K_ADDR[16];
+	wire is_ctrl	= region_e & (M68K_ADDR[19:1] == 19'h3FF80);
+	wire is_shadow	= region_e & (M68K_ADDR[19:4] == 16'h7FF1);
+	wire [15:0] shadow_q = SHADOW[{M68K_ADDR[3:1], 4'd0} +: 16];
+
+	assign VRAM_ADDR = is_fast ? {4'd0, M68K_ADDR[11:1]} : M68K_ADDR[15:1];
+	assign VRAM_WDATA = M68K_DOUT;
+	reg [1:0] vram_wait;
+	reg [15:0] vram_q;
 	wire iack7		= FC2 & FC1 & FC0 & ~nAS & (M68K_ADDR[3:1] == 3'd7);
 	wire strobe		= ~nAS & ~(nUDS & nLDS);
 
@@ -90,11 +111,16 @@ module ss_m68k
 			cyc_ready <= 1'b0;
 			win_rd <= 1'b0;
 			win_wr <= 1'b0;
+			SVRAM_WE <= 1'b0;
+			FVRAM_WE <= 1'b0;
+			vram_wait <= 2'd0;
 		end
 		else begin
 			done <= 1'b0;
 			win_rd <= 1'b0;
 			win_wr <= 1'b0;
+			SVRAM_WE <= 1'b0;
+			FVRAM_WE <= 1'b0;
 
 			if (start & ~busy) begin
 				busy <= 1'b1;
@@ -128,6 +154,13 @@ module ss_m68k
 					win_wdata <= M68K_DOUT;
 					win_be <= {~nUDS, ~nLDS};
 				end
+				else if (is_vram & busy & M68K_RW)
+					vram_wait <= 2'd2;			// the RAM's address is in by now
+				else if (is_vram & busy) begin	// whole words: the stub moves no bytes there
+					SVRAM_WE <= ~is_fast;
+					FVRAM_WE <= is_fast;
+					cyc_ready <= 1'b1;
+				end
 				else begin
 					cyc_ready <= 1'b1;			// stub, CTRL, vector, idle window
 					if (is_ctrl & ~M68K_RW & busy) begin
@@ -141,6 +174,13 @@ module ss_m68k
 				win_q <= win_rdata;
 				cyc_ready <= 1'b1;
 			end
+			else if (vram_wait != 2'd0) begin
+				vram_wait <= vram_wait - 1'd1;
+				if (vram_wait == 2'd1) begin
+					vram_q <= is_fast ? FVRAM_Q : SVRAM_Q;
+					cyc_ready <= 1'b1;
+				end
+			end
 		end
 	end
 
@@ -149,7 +189,10 @@ module ss_m68k
 	assign DIN_EN = (region_e | is_vec) & M68K_RW;
 	assign DIN = is_vec ? (M68K_ADDR[1] ? STUB_BASE[15:0] : {8'h00, STUB_BASE[23:16]}) :
 					 is_ctrl ? {15'd0, load} :
+					 is_shadow ? shadow_q :
 					 is_stub ? stub_q :
-					 win_q;
+					 is_vram ? vram_q :
+					 is_win ? win_q :
+					 16'h0000;
 
 endmodule

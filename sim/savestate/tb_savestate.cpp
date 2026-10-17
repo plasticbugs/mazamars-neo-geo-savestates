@@ -8,8 +8,9 @@
 // save: run to bus cycle <at>, open the menu (the CPU halts), ask for a save
 //       (0xA0), read the buffer over the bridge into state.bin, close the
 //       menu and log the bus cycles that follow the stub.
-// load: run to <at>, scribble over work RAM and the CPU's registers, open
-//       the menu, write state.bin over the bridge, ask for a load (0xA4),
+// load: run to <at>, scribble over work RAM, the CPU's registers and the
+//       rest of what the stub restores (palette, VRAM, latch, LSPC registers,
+//       P-ROM bank), open the menu, write state.bin over the bridge, ask for a load (0xA4),
 //       close the menu and log what follows the stub.
 // loadsave: load as above, scribble over the buffer, then ask for a save
 //       with the menu still open and read it into state2.bin.
@@ -127,6 +128,7 @@ static void write_buffer(const std::vector<uint32_t> &w) {
 // A save (load = false) or a load, the way core_bridge_cmd asks for one
 static void command(bool load) {
 	const char *what = load ? "load" : "save";
+	const int slatch = r->tb_savestate__DOT__slatch;
 	(load ? m->savestate_load : m->savestate_start) = 1;
 	int n = 0;
 	while (!(load ? m->savestate_load_ack : m->savestate_start_ack)) {
@@ -142,6 +144,11 @@ static void command(bool load) {
 		if (++t > 200000000L) { fprintf(stderr, "%s: never finished\n", what); exit(1); }
 	}
 	if (load ? m->savestate_load_err : m->savestate_start_err) { fprintf(stderr, "%s: error\n", what); exit(1); }
+	// A save switches palette banks to copy both: it must put the game's back
+	if (!load && r->tb_savestate__DOT__slatch != slatch) {
+		fprintf(stderr, "save: system latch %02x afterwards, %02x before\n", r->tb_savestate__DOT__slatch, slatch);
+		exit(1);
+	}
 	fprintf(stderr, "%s: ok after %.2f ms\n", what, t * 2 * HALF_74 / 1e9);
 }
 
@@ -199,6 +206,15 @@ int main(int argc, char **argv) {
 		auto &rh = r->tb_savestate__DOT__dut__DOT__FX68K__DOT__excUnit__DOT__regs68H;
 		for (int i = 0; i < 16; i++) { uint32_t v = noise(); rl[i] = v; rh[i] = v >> 16; }
 		rh[16] = 0x0010; rl[16] = 0x1000 + (noise() & 0xDFFE);
+		// And the rest of what the stub restores
+		r->tb_savestate__DOT__slatch = noise();
+		for (int i = 0; i < 8192; i++) r->tb_savestate__DOT__pal[i] = noise();
+		for (int i = 0; i < 32768; i++) r->tb_savestate__DOT__svram[i] = noise();
+		for (int i = 0; i < 2048; i++) r->tb_savestate__DOT__fvram[i] = noise();
+		r->tb_savestate__DOT__vramaddr = noise();
+		r->tb_savestate__DOT__vrammod = noise();
+		r->tb_savestate__DOT__lspcmode = noise();
+		r->tb_savestate__DOT__p_bank = noise() & 15;
 	}
 
 	m->menu = 1;

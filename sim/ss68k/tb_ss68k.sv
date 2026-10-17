@@ -85,7 +85,14 @@ module tb_ss68k(
 		.win_wdata		(win_wdata),
 		.win_be			(win_be),
 		.win_rdata		(win_rdata),
-		.win_ack			(win_ack)
+		.win_ack			(win_ack),
+		.SHADOW			(128'd0),
+		.VRAM_ADDR		(),
+		.VRAM_WDATA		(),
+		.SVRAM_WE		(),
+		.FVRAM_WE		(),
+		.SVRAM_Q			(16'd0),
+		.FVRAM_Q			(16'd0)
 	);
 
 	wire [23:0] byte_addr = {ADDR, 1'b0};

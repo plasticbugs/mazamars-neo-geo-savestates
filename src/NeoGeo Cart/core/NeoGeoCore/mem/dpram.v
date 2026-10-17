@@ -70,6 +70,35 @@ defparam
 
 endmodule
 
+// spram with a second port on the same clock, for savestates: port a
+// behaves as spram's (old data on a write), port b is the stub's.
+module spram_ss #(parameter ADDRWIDTH=8, DATAWIDTH=8)
+(
+	input	                 clock,
+	input	 [ADDRWIDTH-1:0] address,
+	input	 [DATAWIDTH-1:0] data,
+	input	                 wren,
+	output reg [DATAWIDTH-1:0] q,
+	input	 [ADDRWIDTH-1:0] address_b,
+	input	 [DATAWIDTH-1:0] data_b,
+	input	                 wren_b,
+	output reg [DATAWIDTH-1:0] q_b
+);
+
+reg [DATAWIDTH-1:0] memory [(2**ADDRWIDTH)-1:0];
+
+always @(posedge clock) begin
+	if (wren) memory[address] <= data;
+	q <= memory[address];
+end
+
+always @(posedge clock) begin
+	if (wren_b) memory[address_b] <= data_b;
+	q_b <= memory[address_b];
+end
+
+endmodule
+
 module spram #(parameter ADDRWIDTH=8, DATAWIDTH=8, NUMWORDS=1<<ADDRWIDTH)
 (
 	input	                 clock,

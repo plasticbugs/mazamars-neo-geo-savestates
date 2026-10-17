@@ -1,8 +1,11 @@
 // The savestate path end to end, wired as Neogeo.sv wires it: cpu_68k with
 // savestate (ss_m68k, ss_mem) and cram_16bit, whose PSRAM is psram_model.sv.
 // The CPU runs the BIOS from a flat ROM with flat work RAM, as in
-// sim/ss68k; the menu halts it as in Neogeo.sv; the C++ side plays the
-// Pocket: core_bridge_cmd's savestate signals and the bridge.
+// sim/ss68k, plus what the stub saves besides: the system latch, palette
+// RAM in two banks, the LSPC's write-only registers, the P-ROM bank, and
+// the VRAMs on their second port. The menu halts the CPU as in Neogeo.sv;
+// the C++ side plays the Pocket: core_bridge_cmd's savestate signals and
+// the bridge.
 module tb_savestate(
 	input					clk_74a,
 	input					clk_sys,
@@ -83,6 +86,25 @@ module tb_savestate(
 		.HALT				(HALT_24M & ~ss_run_68k)
 	);
 
+	// What the stub reaches besides work RAM, as the C++ side scribbles it
+	reg [7:0] slatch = 8'd0;						// syslatch.v
+	reg [15:0] pal [0:8191];						// {PALBNK, word}
+	reg [15:0] vramaddr = 16'd0, vrammod = 16'd0, lspcmode = 16'd0;
+	reg [3:0] p_bank = 4'd0;
+	reg [15:0] svram [0:32767];
+	reg [15:0] fvram [0:2047];
+	wire [127:0] shadow = {64'd0, {12'd0, p_bank}, lspcmode, vrammod, vramaddr, {8'd0, slatch}};
+	wire [14:0] vram_addr;
+	wire [15:0] vram_wdata;
+	wire svram_we, fvram_we;
+	reg [15:0] svram_q, fvram_q;
+	always @(posedge CLK_24M) begin
+		if (svram_we) svram[vram_addr] <= vram_wdata;
+		svram_q <= svram[vram_addr];
+		if (fvram_we) fvram[vram_addr[10:0]] <= vram_wdata;
+		fvram_q <= fvram[vram_addr[10:0]];
+	end
+
 	savestate ss(
 		.clk_74a					(clk_74a),
 		.clk_sys					(clk_sys),
@@ -124,7 +146,14 @@ module tb_savestate(
 		.ss_data					(ss_data),
 		.ss_be					(ss_be),
 		.ss_q						(ss_q),
-		.ss_ack					(ss_ack)
+		.ss_ack					(ss_ack),
+		.SHADOW					(shadow),
+		.VRAM_ADDR				(vram_addr),
+		.VRAM_WDATA				(vram_wdata),
+		.SVRAM_WE				(svram_we),
+		.FVRAM_WE				(fvram_we),
+		.SVRAM_Q					(svram_q),
+		.FVRAM_Q					(fvram_q)
 	);
 
 	// CRAM0's controller with only the savestate port in use
@@ -189,8 +218,11 @@ module tb_savestate(
 	wire [23:0] byte_addr = {ADDR, 1'b0};
 	wire is_rom = (byte_addr[23:17] == 7'h00) || (byte_addr[23:17] == 7'h60);
 	wire is_ram = (byte_addr[23:16] == 8'h10);
+	wire is_pal = (byte_addr[23:22] == 2'b01);
+	wire [12:0] pal_a = {slatch[7], byte_addr[12:1]};
 	wire [15:0] rd = is_rom ? rom[byte_addr[16:1]] :
-						  is_ram ? ram[byte_addr[15:1]] : 16'hFFFF;
+						  is_ram ? ram[byte_addr[15:1]] :
+						  is_pal ? pal[pal_a] : 16'hFFFF;
 
 	assign FX68K_DATAIN = ss_din_en ? ss_din : RW ? rd : 16'h0000;
 	assign DIN = FX68K_DATAIN;
@@ -201,6 +233,28 @@ module tb_savestate(
 			if (!nUDS) ram[byte_addr[15:1]][15:8] <= FX68K_DATAOUT[15:8];
 			if (!nLDS) ram[byte_addr[15:1]][7:0]  <= FX68K_DATAOUT[7:0];
 		end
+
+	// The rest, on the write's strobe edge
+	reg wr_seen = 1'b0;
+	always @(posedge CLK_24M) begin
+		if (nAS) wr_seen <= 1'b0;
+		else if (!RW && !(nUDS && nLDS) && !wr_seen) begin
+			wr_seen <= 1'b1;
+			if (is_pal) begin
+				if (!nUDS) pal[pal_a][15:8] <= FX68K_DATAOUT[15:8];
+				if (!nLDS) pal[pal_a][7:0]  <= FX68K_DATAOUT[7:0];
+			end
+			if (byte_addr[23:16] == 8'h3A && byte_addr[15:5] == 0 && !nLDS)
+				slatch[byte_addr[3:1]] <= byte_addr[4];
+			if (byte_addr[23:16] == 8'h3C) case (byte_addr[3:1])
+				3'd0: vramaddr <= FX68K_DATAOUT;
+				3'd2: vrammod <= FX68K_DATAOUT;
+				3'd3: lspcmode <= FX68K_DATAOUT;
+				default: ;
+			endcase
+			if (byte_addr[23:20] == 4'h2 && !nLDS) p_bank <= FX68K_DATAOUT[3:0];
+		end
+	end
 
 	reg [31:0] cpu_time;
 	assign CPU_TIME = cpu_time;

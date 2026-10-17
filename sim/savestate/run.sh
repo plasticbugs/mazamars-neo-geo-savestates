@@ -43,13 +43,15 @@ else
     exit 1
 fi
 ./Vtb_savestate "$bios" loadsave "$load_at" 0 state.bin state2.bin
-# Compare what the stub writes: registers, USP and SSP, and work RAM
+# Compare what the stub writes (the layout in ss68k_stub.s)
 python3 -I - state.bin state2.bin <<'PY'
 import sys
 a, b = (open(f, "rb").read() for f in sys.argv[1:3])
-for lo, hi, what in ((0x40, 0x84, "registers"), (0x1000, 0x11000, "work RAM")):
+for lo, hi, what in ((0x40, 0x84, "registers"), (0x100, 0x110, "shadows"),
+                     (0x1000, 0x11000, "work RAM"), (0x11000, 0x15000, "palette"),
+                     (0x15000, 0x25000, "slow VRAM"), (0x25000, 0x26000, "fast VRAM")):
     bad = [i for i in range(lo, hi) if a[i] != b[i]]
     if bad:
         sys.exit(f"FAIL: {what} differ after load+save, first at 0x{bad[0]:x}")
-print("PASS: saving straight after a load gives the same snapshot (registers and work RAM)")
+print("PASS: saving straight after a load gives the same snapshot (registers, shadows, work RAM, palette, VRAM)")
 PY

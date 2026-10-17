@@ -393,6 +393,10 @@ wire			ss_rd, ss_wr, ss_ack;
 wire [18:1]	ss_addr;
 wire [15:0]	ss_data, ss_q;
 wire [1:0]	ss_be;
+wire [15:0]	ss_lspc_vram_addr, ss_lspc_vrammod, ss_lspc_mode;
+wire [14:0]	ss_vram_addr;
+wire [15:0]	ss_vram_wdata, ss_svram_q, ss_fvram_q;
+wire			ss_svram_we, ss_fvram_we;
 
 wire [31:0]	screen_x_pos;
 wire [31:0]	screen_y_pos;
@@ -989,7 +993,16 @@ savestate savestate(
 	.ss_data					(ss_data),
 	.ss_be					(ss_be),
 	.ss_q						(ss_q),
-	.ss_ack					(ss_ack)
+	.ss_ack					(ss_ack),
+	// Word n at 0xE7FF10 + 2n, as ss68k_stub.s reads them
+	.SHADOW					({64'd0, {12'd0, P_BANK}, ss_lspc_mode, ss_lspc_vrammod, ss_lspc_vram_addr,
+									  {8'd0, PALBNK, ~nSRAMWEN, nSYSTEM, nREGEN, CARDWENB, nCARDWEN, nVEC, SHADOW}}),
+	.VRAM_ADDR				(ss_vram_addr),
+	.VRAM_WDATA				(ss_vram_wdata),
+	.SVRAM_WE				(ss_svram_we),
+	.FVRAM_WE				(ss_fvram_we),
+	.SVRAM_Q					(ss_svram_q),
+	.FVRAM_Q					(ss_fvram_q)
 );
 
 always @(posedge CLK_24M) begin
@@ -1370,20 +1383,29 @@ dpram #(16, 8)  LO_RAM(
 // half mclk cycle it provides compared to VCS. This makes sure LO_ROM_DATA is valid when latched.
 assign PBUS[23:16] = nPBUS_OUT_EN ? LO_ROM_DATA : 8'bzzzzzzzz;
 
-spram #(11,16) UFV(
+// The VRAMs' second ports are the savestate stub's (ss_m68k)
+spram_ss #(11,16) UFV(
 	.clock		(CLK_24M),	//~CLK_24M,		// Is just CLK ok ?
 	.address		(FAST_VRAM_ADDR),
 	.data			(FAST_VRAM_DATA_OUT),
 	.wren			(~CWE),
-	.q				(FAST_VRAM_DATA_IN)
+	.q				(FAST_VRAM_DATA_IN),
+	.address_b	(ss_vram_addr[10:0]),
+	.data_b		(ss_vram_wdata),
+	.wren_b		(ss_fvram_we),
+	.q_b			(ss_fvram_q)
 );
 
-spram #(15,16) USV(
+spram_ss #(15,16) USV(
 	.clock		(CLK_24M),	//~CLK_24M,		// Is just CLK ok ?
 	.address		(SLOW_VRAM_ADDR),
 	.data			(SLOW_VRAM_DATA_OUT),
 	.wren			(~BWE),
-	.q				(SLOW_VRAM_DATA_IN)
+	.q				(SLOW_VRAM_DATA_IN),
+	.address_b	(ss_vram_addr),
+	.data_b		(ss_vram_wdata),
+	.wren_b		(ss_svram_we),
+	.q_b			(ss_svram_q)
 );
 
 wire [18:11] MA;
@@ -1608,7 +1630,10 @@ lspc2_a2	LSPC(
 	.FVRAM_DATA_OUT	(FAST_VRAM_DATA_OUT),
 	.CWE					(CWE),
 	.VMODE				(video_mode),
-	.FIXMAP_ADDR		(FIXMAP_ADDR)	// Extracted for NEO-CMC
+	.FIXMAP_ADDR		(FIXMAP_ADDR),	// Extracted for NEO-CMC
+	.SS_VRAM_ADDR		(ss_lspc_vram_addr),
+	.SS_VRAMMOD			(ss_lspc_vrammod),
+	.SS_LSPCMODE		(ss_lspc_mode)
 );
 
 wire nRESET_WD;

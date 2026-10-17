@@ -1,6 +1,8 @@
 # Savestates (Pocket Memories): design
 
-Status: design, step 1 (pause) built. Primary target: Metal Slug (`mslug`).
+Status: pause built; the 68k side of savestates built and simulated (registers,
+work RAM, palette, VRAM, system latch, LSPC registers, P-ROM bank); Z80 and
+YM2610 to do. Primary target: Metal Slug (`mslug`).
 
 ## The idea: the CPUs save themselves
 
@@ -16,7 +18,7 @@ visible to the CPUs through the machine's own buses:
 | 68k PC, SR | 6 B | the exception frame the stub's interrupt pushed |
 | Work RAM | 64 KB | 68k, 0x100000 |
 | Palette RAM, both banks | 16 KB | 68k, 0x400000, bank latch 0x3A000F/1F |
-| Slow + fast VRAM | 68 KB | 68k, LSPC port 0x3C0000-04 |
+| Slow + fast VRAM | 68 KB | the VRAMs' second port, in the stub's region (0xE40000, 0xE50000): no LSPC slot timing to meet |
 | Memory card | 2-8 KB | 68k, 0x800000 |
 | Backup RAM (MVS) | 64 KB | 68k, 0xD00000 |
 | Z80 registers, RAM | 2 KB + regs | the Z80, in an NMI stub |
@@ -57,6 +59,28 @@ the stub writes the snapshot to a buffer and reads it back.
   keeps running (`run`) until the RTE's first stack pop, outside 0xE00000.
   Halted between the write and the RTE, a new request would be taken there,
   nested inside the stub (the bench caught this: SSP 6 bytes low).
+
+## The snapshot (v2)
+
+Offsets in the window and in the Pocket's file (68k byte order):
+
+| Offset | Size | What |
+|---|---|---|
+| 0x0040 | 60 B | D0-D7, A0-A6 |
+| 0x007C | 4 B | USP |
+| 0x0080 | 4 B | SSP (points at the frame: PC and SR) |
+| 0x0100 | 16 B | shadows: system latch (bit n = latch n), LSPC VRAM address (after increments), modulo, mode as written, P-ROM bank, 3 spare |
+| 0x1000 | 64 KB | work RAM |
+| 0x11000 | 16 KB | palette bank 0, bank 1 |
+| 0x15000 | 64 KB | slow VRAM |
+| 0x25000 | 4 KB | fast VRAM |
+
+The load stub restores the system latch one bit at a time (0x3A0001 + 2n +
+0x10 x value), then the LSPC modulo, mode and VRAM address, then the P-ROM
+bank (a write to 0x2FFFF0). The shadows are read at 0xE7FF10 from
+`syslatch`, `lspc2_a2` (`SS_*` outputs) and `P_BANK`. Not yet saved: the LSPC
+timer's reload value and count, pending IRQs, the raster position (the video
+runs on through the menu), the Z80 side.
 
 ## Z80 and YM2610
 

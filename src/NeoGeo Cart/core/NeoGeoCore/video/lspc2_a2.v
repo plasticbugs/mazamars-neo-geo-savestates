@@ -72,7 +72,12 @@ module lspc2_a2(
 	
 	input VMODE,
 	
-	output [14:0] FIXMAP_ADDR		// Extracted for NEO-CMC
+	output [14:0] FIXMAP_ADDR,		// Extracted for NEO-CMC
+
+	// Savestates: write-only registers, as the CPU would read them back
+	output [15:0] SS_VRAM_ADDR,	// the address, after any increments
+	output [15:0] SS_VRAMMOD,
+	output [15:0] SS_LSPCMODE		// as written to $3C0006
 );
 
 	wire [8:0] PIXELC;
@@ -598,6 +603,10 @@ module lspc2_a2(
 	wire LSPC_6M; 
 	
 	wire D46A_OUT;
+	assign SS_VRAM_ADDR = VRAM_ADDR;
+	assign SS_VRAMMOD = REG_VRAMMOD;
+	assign SS_LSPCMODE = {AA_SPEED, TIMER_MODE[2], TIMER_MODE[1:0], TIMER_IRQ_EN, AA_DISABLE, 3'b000};
+
 	lspc_timer TIMER(LSPC_6M, nRESETP, M68K_DATA, WR_TIMER_HIGH, WR_TIMER_LOW, VMODE, TIMER_MODE, TIMER_STOP,
 						RASTERC, TIMER_IRQ_EN, R74_nQ, BNKB, D46A_OUT);
 	

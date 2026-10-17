@@ -60,7 +60,16 @@ module savestate
 	output	[15:0]	ss_data,
 	output	[1:0]		ss_be,
 	input		[15:0]	ss_q,
-	input					ss_ack
+	input					ss_ack,
+
+	// The machine's state the stub cannot reach over the bus (ss_m68k)
+	input		[127:0]	SHADOW,
+	output	[14:0]	VRAM_ADDR,
+	output	[15:0]	VRAM_WDATA,
+	output				SVRAM_WE,
+	output				FVRAM_WE,
+	input		[15:0]	SVRAM_Q,
+	input		[15:0]	FVRAM_Q
 );
 
 	// The command, clk_74a. A request crosses to CLK_24M as a toggle with
@@ -177,7 +186,14 @@ module savestate
 		.win_wdata		(win_wdata),
 		.win_be			(win_be),
 		.win_rdata		(win_rdata),
-		.win_ack			(win_ack)
+		.win_ack			(win_ack),
+		.SHADOW			(SHADOW),
+		.VRAM_ADDR		(VRAM_ADDR),
+		.VRAM_WDATA		(VRAM_WDATA),
+		.SVRAM_WE		(SVRAM_WE),
+		.FVRAM_WE		(FVRAM_WE),
+		.SVRAM_Q			(SVRAM_Q),
+		.FVRAM_Q			(FVRAM_Q)
 	);
 
 	ss_mem ss_mem(
