@@ -30,3 +30,6 @@ src/NeoGeo Cart/pll_sdram_sim/aldec/rivierapro_setup.tcl
 src/NeoGeo Cart/pll_sdram_sim/mentor/msim_setup.tcl
 src/NeoGeo Cart/pll_video_sim/aldec/rivierapro_setup.tcl
 src/NeoGeo Cart/pll_video_sim/mentor/msim_setup.tcl
+
+/build/
+.mame/
