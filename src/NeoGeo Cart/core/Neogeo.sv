@@ -597,7 +597,7 @@ wire [10:0] FIXMAP_ADDR;
 wire CWE, BWE, BOE;
 
 wire [14:0] SLOW_VRAM_ADDR;
-reg [15:0] SLOW_VRAM_DATA_IN;
+wire [15:0] SLOW_VRAM_DATA_IN;
 wire [15:0] SLOW_VRAM_DATA_OUT;
 
 wire [10:0] FAST_VRAM_ADDR;
