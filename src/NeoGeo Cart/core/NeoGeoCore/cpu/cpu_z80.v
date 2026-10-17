@@ -26,7 +26,8 @@ module cpu_z80(
 	output nMREQ,
 	output reg nRD, nWR,
 	input nINT, nNMI, nWAIT,
-	input CEN
+	input CEN,
+	output nM1, nHALT				// for savestates (ss_z80)
 );
 
 	wire RFSH_n, MREQ_n;
@@ -39,11 +40,14 @@ module cpu_z80(
 		.WAIT_n(nWAIT),
 		.INT_n(nINT),
 		.NMI_n(nNMI),
+		.BUSRQ_n(1'b1),		// T80s's default, lost when converted to Verilog
 		.MREQ_n(MREQ_n),
 		.IORQ_n(nIORQ),
 		.RD_n(nRD),
 		.WR_n(nWR),
 		.RFSH_n(RFSH_n),
+		.M1_n(nM1),
+		.HALT_n(nHALT),
 		.A(SDA),
 		.DI(SDD_IN),
 		.DO(SDD_OUT)
