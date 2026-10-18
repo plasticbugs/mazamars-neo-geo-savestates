@@ -1,17 +1,20 @@
 // The savestate path end to end: see tb_savestate.sv. This side plays the
 // Pocket, as core_bridge_cmd and the bridge would.
 //
-//   obj/Vtb_savestate <bios.rom> save <at> <log> <state.bin>      > a.txt
-//   obj/Vtb_savestate <bios.rom> load <at> <log> <state.bin>      > b.txt
-//   obj/Vtb_savestate <bios.rom> loadsave <at> 0 <state.bin> <state2.bin>
+//   obj/Vtb_savestate <bios.rom> <m1rom> save <at> <log> <state.bin>      > a.txt
+//   obj/Vtb_savestate <bios.rom> <m1rom> load <at> <log> <state.bin>      > b.txt
+//   obj/Vtb_savestate <bios.rom> <m1rom> loadsave <at> 0 <state.bin> <state2.bin>
 //
-// save: run to bus cycle <at>, open the menu (the CPU halts), ask for a save
-//       (0xA0), read the buffer over the bridge into state.bin, close the
-//       menu and log the bus cycles that follow the stub.
+// save: run to 68k bus cycle <at>, open the menu (the CPUs halt), ask for a
+//       save (0xA0), read the buffer over the bridge into state.bin, close
+//       the menu and log the 68k bus cycles that follow the stub; the Z80's
+//       go to z80_save.txt.
 // load: run to <at>, scribble over work RAM, the CPU's registers and the
 //       rest of what the stub restores (palette, VRAM, latch, LSPC registers,
-//       P-ROM bank), open the menu, write state.bin over the bridge, ask for a load (0xA4),
-//       close the menu and log what follows the stub.
+//       P-ROM bank), open the menu, scribble over the Z80's (its RAM, banks,
+//       NMI enable, the sound latches), write state.bin over the bridge, ask
+//       for a load (0xA4), close the menu and log what follows the stubs
+//       (the Z80's to z80_load.txt).
 // loadsave: load as above, scribble over the buffer, then ask for a save
 //       with the menu still open and read it into state2.bin.
 //
@@ -56,12 +59,40 @@ static void monitor() {
 	prev_as = m->nAS;
 }
 
+// The Z80's bus, one line per cycle, once its stub has left
+static FILE *ztrace;
+static bool zlog = false;
+static long zlogged = 0;
+static int zprev = 1;
+static uint32_t zt0 = 0;
+static uint16_t za = 0;
+static uint8_t zd = 0;
+static char zkind[3] = "";
+
+static void zmonitor() {
+	int strobe = m->nRD & m->nWR;
+	if (!strobe) {
+		za = m->SDA;
+		zd = m->nRD ? m->SDD_OUT : m->Z80_DIN;
+		zkind[0] = !m->nMREQ ? (!m->nM1 ? 'F' : 'M') : !m->nIORQ ? 'I' : '?';
+		zkind[1] = m->nRD ? 'W' : 'R';
+	}
+	if (!zprev && strobe && zlog && ztrace) {
+		if (!zlogged++) zt0 = m->Z80_TIME;
+		fprintf(ztrace, "%10u %c%c %04x %02x\n", m->Z80_TIME - zt0, zkind[0], zkind[1], za, zd);
+	}
+	zprev = strobe;
+}
+
 // Advance to the next clock edge
+static bool sys_rose = false;
 static void edge() {
+	sys_rose = false;
 	if (next_74 <= next_sys) { now = next_74; next_74 += HALF_74; m->clk_74a = !m->clk_74a; }
-	else { now = next_sys; next_sys += HALF_SYS; m->clk_sys = !m->clk_sys; }
+	else { now = next_sys; next_sys += HALF_SYS; m->clk_sys = !m->clk_sys; sys_rose = m->clk_sys; }
 	m->eval();
 	monitor();
+	zmonitor();
 }
 
 // Run up to just after the next rising edge of clk_74a
@@ -175,11 +206,13 @@ static uint32_t x = 0x12345678;
 static uint32_t noise() { x ^= x << 13; x ^= x >> 17; x ^= x << 5; return x; }
 
 int main(int argc, char **argv) {
-	if (argc < 6) { fprintf(stderr, "usage: %s bios save|load|loadsave at log state.bin [state2.bin]\n", argv[0]); return 2; }
-	const bool loadsave = !strcmp(argv[2], "loadsave");
-	const bool load = loadsave || !strcmp(argv[2], "load");
-	if (loadsave && argc < 7) { fprintf(stderr, "loadsave needs state2.bin\n"); return 2; }
-	const long at = atol(argv[3]), want = atol(argv[4]);
+	if (argc < 7) { fprintf(stderr, "usage: %s bios m1rom save|load|loadsave at log state.bin [state2.bin]\n", argv[0]); return 2; }
+	const char *mode = argv[3];
+	const bool loadsave = !strcmp(mode, "loadsave");
+	const bool load = loadsave || !strcmp(mode, "load");
+	if (loadsave && argc < 8) { fprintf(stderr, "loadsave needs state2.bin\n"); return 2; }
+	const long at = atol(argv[4]), want = atol(argv[5]);
+	const char *state = argv[6], *state2 = argv[7];
 	if (getenv("BRIDGE_GAP")) gap = atoi(getenv("BRIDGE_GAP"));
 
 	auto *ctx = new VerilatedContext;
@@ -193,7 +226,25 @@ int main(int argc, char **argv) {
 	fclose(f);
 	for (int i = 0; i < 65536; i++) r->tb_savestate__DOT__rom[i] = bios[2*i] | (bios[2*i+1] << 8);
 
-	m->nRESET = 0; m->menu = 0; m->clk_74a = 0; m->clk_sys = 0;
+	f = fopen(argv[2], "rb");
+	if (!f) { perror(argv[2]); return 2; }
+	std::vector<uint8_t> m1(524288);
+	size_t n = fread(m1.data(), 1, m1.size(), f);
+	fclose(f);
+	unsigned mask = 1;
+	while (mask < n) mask <<= 1;
+	for (size_t i = 0; i < m1.size(); i++) r->tb_savestate__DOT__m1rom[i] = m1[i];
+	r->tb_savestate__DOT__m1_mask = mask - 1;
+
+	char zname[64];
+	snprintf(zname, sizeof zname, "z80_%s.txt", mode);
+	if (!loadsave && !(ztrace = fopen(zname, "w"))) { perror(zname); return 2; }
+
+	// A falling edge on nRESET: the asynchronous resets (z80ctrl's NMI flop)
+	// act on the edge here, though on the chip they follow the level
+	m->nRESET = 1; m->menu = 0; m->clk_74a = 0; m->clk_sys = 0;
+	for (int i = 0; i < 20; i++) tick74();
+	m->nRESET = 0;
 	for (int i = 0; i < 200; i++) tick74();
 	m->nRESET = 1;
 	while (bus < at) tick74();
@@ -222,34 +273,49 @@ int main(int argc, char **argv) {
 	uint32_t halted_at = m->CPU_TIME;
 	for (int i = 0; i < 100; i++) tick74();
 	if (m->CPU_TIME != halted_at) { fprintf(stderr, "the menu did not halt the CPU\n"); return 1; }
-	fprintf(stderr, "%s: menu open at bus cycle %ld\n", argv[2], bus);
+	fprintf(stderr, "%s: menu open at bus cycle %ld\n", mode, bus);
 
 	if (!load) {
 		phase = 1;
 		command(false);
 		phase = 2;
-		write_file(argv[5], read_buffer());
+		zlog = true;
+		write_file(state, read_buffer());
 	}
 	else {
-		write_buffer(read_file(argv[5]));
+		// The Z80's side, now that it is halted
+		for (int i = 0; i < 2048; i++) r->tb_savestate__DOT__Z80RAM__DOT__memory[i] = noise();
+		r->tb_savestate__DOT__ZMC__DOT__WINDOW_0 = noise();
+		r->tb_savestate__DOT__ZMC__DOT__WINDOW_1 = noise() & 0x7F;
+		r->tb_savestate__DOT__ZMC__DOT__WINDOW_2 = noise() & 0x3F;
+		r->tb_savestate__DOT__ZMC__DOT__WINDOW_3 = noise() & 0x1F;
+		r->tb_savestate__DOT__Z80CTRL__DOT__nNMI_EN = noise() & 1;
+		r->tb_savestate__DOT__cmd_latch = noise();
+		r->tb_savestate__DOT__rep_latch = noise();
+		write_buffer(read_file(state));
 		phase = 1;
 		command(true);
 		phase = 2;
+		zlog = true;
 		if (loadsave) {
 			for (int i = 0; i < 2 * WORDS; i++) model(i) = noise();
 			phase = 0;
 			command(false);
-			write_file(argv[6], read_buffer());
+			write_file(state2, read_buffer());
 			fprintf(stderr, "loadsave: saved again with the menu still open\n");
 			delete m;
 			return 0;
 		}
 	}
 
+	// Close the menu at the same phase of the clocks in every run: the CPUs
+	// then start again in the same relation to each other
 	for (int i = 0; i < 1000; i++) tick74();
+	do edge(); while (!(sys_rose && m->DIV == 0));
 	m->menu = 0;
 	while (logged < want) tick74();
-	fprintf(stderr, "%s: %ld bus cycles logged\n", argv[2], logged);
+	fclose(ztrace);
+	fprintf(stderr, "%s: %ld bus cycles logged, %ld of the Z80's\n", mode, logged, zlogged);
 	m->final();
 	delete m;
 	delete ctx;

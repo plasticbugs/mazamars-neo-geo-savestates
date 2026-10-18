@@ -1,0 +1,9 @@
+`verilator_config
+// The Z80 side's state that tb_savestate.cpp reads and writes directly
+public_flat_rw -module "tb_savestate" -var "m1rom"
+public_flat_rw -module "tb_savestate" -var "m1_mask"
+public_flat_rw -module "tb_savestate" -var "cmd_latch"
+public_flat_rw -module "tb_savestate" -var "rep_latch"
+public_flat_rw -module "zmc" -var "WINDOW_*"
+public_flat_rw -module "z80ctrl" -var "nNMI_EN"
+public_flat_rw -module "ss_dpram_2clk" -var "memory"

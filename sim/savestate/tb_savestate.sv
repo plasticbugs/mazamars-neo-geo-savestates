@@ -3,9 +3,11 @@
 // The CPU runs the BIOS from a flat ROM with flat work RAM, as in
 // sim/ss68k, plus what the stub saves besides: the system latch, palette
 // RAM in two banks, the LSPC's write-only registers, the P-ROM bank, and
-// the VRAMs on their second port. The menu halts the CPU as in Neogeo.sv;
-// the C++ side plays the Pocket: core_bridge_cmd's savestate signals and
-// the bridge.
+// the VRAMs on their second port. The Z80 side is sim/ssz80's: T80 running
+// a game's M1 ROM, with z80ctrl, zmc, Z80 RAM on a second port and jt10,
+// and the sound latches on the 68k's bus at 0x320000 as c1_regs.v has them.
+// The menu halts both CPUs and the YM2610 as in Neogeo.sv; the C++ side
+// plays the Pocket: core_bridge_cmd's savestate signals and the bridge.
 module tb_savestate(
 	input					clk_74a,
 	input					clk_sys,
@@ -38,16 +40,38 @@ module tb_savestate(
 	output				nUDS,
 	output				nLDS,
 	output [31:0]		CPU_TIME,
-	output				RUN_68K
+	output				RUN_68K,
+
+	// The Z80's bus, for its trace
+	output	[15:0]	SDA,
+	output	[7:0]		Z80_DIN,			// what the Z80 reads
+	output	[7:0]		SDD_OUT,
+	output				nMREQ,
+	output				nIORQ,
+	output				nRD,
+	output				nWR,
+	output				nM1,
+	output	[31:0]	Z80_TIME,
+	output	[4:0]		DIV				// clk_sys mod 24: the clocks' phase
 );
 
-	reg [1:0] counter_p = 2'd0;
-	always @(posedge clk_sys) counter_p <= counter_p + 1'd1;
-	assign CLK_24M = counter_p[1];
+	// CLK_24M, CLK_8M and CLK_4M from one divider, in phase as the core's
+	// PLL gives them
+	reg [4:0] div = 5'd0;
+	reg CLK_8M = 1'b0, CLK_4M = 1'b0;
+	always @(posedge clk_sys) begin
+		div <= (div == 5'd23) ? 5'd0 : div + 1'd1;
+		CLK_8M <= (div >= 5'd5 && div < 5'd11) || (div >= 5'd17 && div < 5'd23);
+		CLK_4M <= (div >= 5'd11 && div < 5'd23);
+	end
+	assign CLK_24M = div[1];
+	assign DIV = div;
 
-	reg [1:0] halt_24m_sr = 2'b00;
+	reg [1:0] halt_24m_sr = 2'b00, halt_4m_sr = 2'b00, halt_8m_sr = 2'b00;
 	always @(posedge CLK_24M) halt_24m_sr <= {halt_24m_sr[0], menu};
-	wire HALT_24M = halt_24m_sr[1];
+	always @(posedge CLK_4M) halt_4m_sr <= {halt_4m_sr[0], menu};
+	always @(posedge CLK_8M) halt_8m_sr <= {halt_8m_sr[0], menu};
+	wire HALT_24M = halt_24m_sr[1], HALT_4M = halt_4m_sr[1], HALT_8M = halt_8m_sr[1];
 
 	reg [15:0] rom [0:65535];				// BIOS, word-swapped on load by the C++ side
 	reg [15:0] ram [0:32767];				// work RAM, 0x100000
@@ -62,6 +86,22 @@ module tb_savestate(
 	wire [15:0] ss_data, ss_q;
 	wire [1:0] ss_be;
 	assign RUN_68K = ss_run_68k;
+
+	// The Z80 side (below)
+	wire [7:0] SDD_IN;
+	wire nHALT, nZ80INT, nZ80NMI, nWAIT;
+	wire ss_z80_din_en, ss_z80_int_force, ss_z80_int_mask, ss_run_z80, ss_ym_run, ss_ym_load, ss_z80_sdw;
+	wire [39:0] ym_ss_q, ym_ss_d;
+	wire [7:0] ss_z80_din;
+	wire ss_z80_nmi_n;
+	wire nSDZ80R, nSDZ80W, nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1;
+	wire n2610CS, n2610RD, n2610WR, nZRAMCS;
+	wire nNMI_EN_Q;
+	wire [31:0] z80_windows;
+	reg [7:0] cmd_latch = 8'd0, rep_latch = 8'd0;
+	wire [10:0] zram_addr;
+	wire [7:0] zram_wdata, zram_q;
+	wire zram_we;
 
 	cpu_68k dut(
 		.CLK_24M			(CLK_24M),
@@ -93,7 +133,8 @@ module tb_savestate(
 	reg [3:0] p_bank = 4'd0;
 	reg [15:0] svram [0:32767];
 	reg [15:0] fvram [0:2047];
-	wire [127:0] shadow = {64'd0, {12'd0, p_bank}, lspcmode, vrammod, vramaddr, {8'd0, slatch}};
+	wire [127:0] shadow = {{7'd0, ~nNMI_EN_Q, cmd_latch}, z80_windows, {12'd0, p_bank},
+								  lspcmode, vrammod, vramaddr, {8'd0, slatch}};
 	wire [14:0] vram_addr;
 	wire [15:0] vram_wdata;
 	wire svram_we, fvram_we;
@@ -153,7 +194,36 @@ module tb_savestate(
 		.SVRAM_WE				(svram_we),
 		.FVRAM_WE				(fvram_we),
 		.SVRAM_Q					(svram_q),
-		.FVRAM_Q					(fvram_q)
+		.FVRAM_Q					(fvram_q),
+		.CLK_4M					(CLK_4M),
+		.CLK_8M					(CLK_8M),
+		.Z80_nRESET				(nRESET),
+		.SDA						(SDA),
+		.nMREQ					(nMREQ),
+		.nIORQ					(nIORQ),
+		.nRD						(nRD),
+		.nWR						(nWR),
+		.nM1						(nM1),
+		.nHALT					(nHALT),
+		.SDD_OUT					(SDD_OUT),
+		.SDD_IN					(SDD_IN),
+		.n2610WR					(n2610WR),
+		.nNMI_LINE				(nZ80NMI),
+		.Z80_SDW					(ss_z80_sdw),
+		.Z80_NMI_N				(ss_z80_nmi_n),
+		.Z80_DIN_EN				(ss_z80_din_en),
+		.Z80_DIN					(ss_z80_din),
+		.Z80_INT_FORCE			(ss_z80_int_force),
+		.Z80_INT_MASK			(ss_z80_int_mask),
+		.run_z80					(ss_run_z80),
+		.YM_RUN					(ss_ym_run),
+		.YM_SS_Q					(ym_ss_q),
+		.YM_SS_LOAD				(ss_ym_load),
+		.YM_SS_D					(ym_ss_d),
+		.ZRAM_ADDR				(zram_addr),
+		.ZRAM_WDATA				(zram_wdata),
+		.ZRAM_WE					(zram_we),
+		.ZRAM_Q					(zram_q)
 	);
 
 	// CRAM0's controller with only the savestate port in use
@@ -220,9 +290,11 @@ module tb_savestate(
 	wire is_ram = (byte_addr[23:16] == 8'h10);
 	wire is_pal = (byte_addr[23:22] == 2'b01);
 	wire [12:0] pal_a = {slatch[7], byte_addr[12:1]};
+	wire is_icom = (byte_addr[23:17] == 7'b0011001);	// 0x320000, REG_SOUND
 	wire [15:0] rd = is_rom ? rom[byte_addr[16:1]] :
 						  is_ram ? ram[byte_addr[15:1]] :
-						  is_pal ? pal[pal_a] : 16'hFFFF;
+						  is_pal ? pal[pal_a] :
+						  is_icom ? {rep_latch, 8'hFF} : 16'hFFFF;
 
 	assign FX68K_DATAIN = ss_din_en ? ss_din : RW ? rd : 16'h0000;
 	assign DIN = FX68K_DATAIN;
@@ -255,6 +327,111 @@ module tb_savestate(
 			if (byte_addr[23:20] == 4'h2 && !nLDS) p_bank <= FX68K_DATAOUT[3:0];
 		end
 	end
+
+	// The Z80 side, as Neogeo.sv has it (sim/ssz80/tb_ssz80.sv)
+	cpu_z80 Z80CPU(
+		.CLK_4M	(CLK_4M),
+		.nRESET	(nRESET),
+		.SDA		(SDA),
+		.SDD_IN	(Z80_DIN),
+		.SDD_OUT	(SDD_OUT),
+		.nIORQ	(nIORQ),
+		.nMREQ	(nMREQ),
+		.nRD		(nRD),
+		.nWR		(nWR),
+		.nINT		(ss_z80_int_force ? 1'b0 : (nZ80INT | ss_z80_int_mask)),
+		.nNMI		(ss_z80_nmi_n),
+		.nWAIT	(nWAIT),
+		.CEN		(~HALT_4M | ss_run_z80),
+		.nM1		(nM1),
+		.nHALT	(nHALT)
+	);
+	assign Z80_DIN = ss_z80_din_en ? ss_z80_din : SDD_IN;
+
+	// Wait states on reads below 0xF800, as cram_16bit's z80_ready makes
+	// them while the M1 ROM comes from PSRAM: 0-3, from the address
+	wire rom_rd = ~nMREQ & ~nRD & (SDA[15:11] != 5'b11111);
+	wire [1:0] rom_waits = SDA[1:0] ^ SDA[3:2];
+	reg rom_rd_r = 1'b0;
+	reg [1:0] wait_left = 2'd0;
+	always @(posedge CLK_4M) begin
+		rom_rd_r <= rom_rd;
+		if (rom_rd & ~rom_rd_r) wait_left <= rom_waits;
+		else if (wait_left != 2'd0) wait_left <= wait_left - 1'd1;
+	end
+	assign nWAIT = ~(rom_rd & (rom_rd_r ? (wait_left != 2'd0) : (rom_waits != 2'd0)));
+
+	wire nICOM = nUDS | ~is_icom;			// REG_SOUND's even byte
+	wire nSDW = RW | nICOM;
+	z80ctrl Z80CTRL(SDA[4:2], SDA[15:11], nRD, nWR, nMREQ, nIORQ, nSDW & ~ss_z80_sdw, nRESET, nZ80NMI, nSDZ80R, nSDZ80W,
+				nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1, n2610CS, n2610RD, n2610WR, nZRAMCS,
+				nNMI_EN_Q);
+	wire [18:11] MA;
+	zmc ZMC(.nRESET(nRESET), .nSDRD0(SDRD0), .SDA_L(SDA[1:0]), .SDA_U(SDA[15:8]), .MA(MA), .WINDOWS(z80_windows));
+
+	// The sound latches (c1_regs.v): a write to REG_SOUND loads the command
+	// on nICOM's falling edge, a port 0 write clears it; the Z80's port 0x0C
+	// write loads the reply.
+	always @(negedge nICOM or negedge nSDZ80CLR)
+		if (!nSDZ80CLR) cmd_latch <= 8'd0;
+		else if (!RW) cmd_latch <= FX68K_DATAOUT[15:8];
+	always @(posedge nSDZ80W) rep_latch <= SDD_OUT;
+
+	wire [7:0] z80ram_q;
+	ss_dpram_2clk #(11, 8) Z80RAM(
+		.clock_a		(CLK_4M),
+		.address_a	(SDA[10:0]),
+		.data_a		(SDD_OUT),
+		.wren_a		(~(nZRAMCS | nSDMWR)),
+		.q_a			(z80ram_q),
+		.clock_b		(CLK_24M),
+		.address_b	(zram_addr),
+		.data_b		(zram_wdata),
+		.wren_b		(zram_we),
+		.q_b			(zram_q)
+	);
+
+	wire [7:0] ym_dout;
+	jt10 YM2610(
+		.rst					(~nRESET),
+		.clk					(CLK_8M),
+		.cen					(~HALT_8M | ss_ym_run),
+		.addr					(SDA[1:0]),
+		.din					(SDD_OUT),
+		.dout					(ym_dout),
+		.cs_n					(n2610CS),
+		.wr_n					(n2610WR),
+		.irq_n				(nZ80INT),
+		.adpcma_addr		(),
+		.adpcma_bank		(),
+		.adpcma_roe_n		(),
+		.adpcma_data		(8'd0),
+		.adpcmb_addr		(),
+		.adpcmb_roe_n		(),
+		.adpcmb_data		(8'd0),
+		.snd_right			(),
+		.snd_left			(),
+		.snd_enable			(),
+		.ch_enable			(6'h3F),
+		.ss_q					(ym_ss_q),
+		.ss_load				(ss_ym_load),
+		.ss_d					(ym_ss_d)
+	);
+
+	reg [7:0] m1rom [0:524287];				// the M1 ROM, from the C++ side
+	reg [18:0] m1_mask = 19'h1FFFF;
+	wire [7:0] m1_q = m1rom[{MA, SDA[10:0]} & m1_mask];
+	assign SDD_IN = (~nSDZ80R) ? cmd_latch :
+						 (~nSDMRD & ~nSDROM) ? m1_q :
+						 (~nSDMRD & ~nZRAMCS) ? z80ram_q :
+						 (~n2610CS & ~n2610RD) ? ym_dout :
+						 8'b00000000;
+
+	reg [31:0] z80_time = 32'd0;
+	assign Z80_TIME = z80_time;
+	always @(posedge CLK_4M)
+		if (!nRESET) z80_time <= 32'd0;
+		else if (~HALT_4M | ss_run_z80) z80_time <= z80_time + 1'd1;
 
 	reg [31:0] cpu_time;
 	assign CPU_TIME = cpu_time;
