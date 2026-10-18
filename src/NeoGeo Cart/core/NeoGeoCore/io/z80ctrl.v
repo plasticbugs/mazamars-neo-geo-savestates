@@ -31,10 +31,12 @@ module z80ctrl(
 	output nSDRD0, nSDRD1,
 	output n2610CS,
 	output n2610RD, n2610WR,
-	output nZRAMCS
+	output nZRAMCS,
+	output nNMI_EN_Q				// for savestates
 );
 
 	reg nNMI_EN;
+	assign nNMI_EN_Q = nNMI_EN;
 	wire nIORD, nIOWR;
 	wire nNMI_SET, nNMI_RESET;
 	

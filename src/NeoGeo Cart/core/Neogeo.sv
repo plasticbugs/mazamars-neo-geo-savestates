@@ -397,6 +397,15 @@ wire [15:0]	ss_lspc_vram_addr, ss_lspc_vrammod, ss_lspc_mode;
 wire [14:0]	ss_vram_addr;
 wire [15:0]	ss_vram_wdata, ss_svram_q, ss_fvram_q;
 wire			ss_svram_we, ss_fvram_we;
+wire			ss_z80_sdw, ss_z80_nmi_n, ss_z80_din_en, ss_z80_int_force, ss_z80_int_mask;
+wire			ss_run_z80, ss_ym_run, ss_ym_load;
+wire [7:0]	ss_z80_din;
+wire [39:0]	ss_ym_q, ss_ym_d;
+wire [10:0]	ss_zram_addr;
+wire [7:0]	ss_zram_wdata, ss_zram_q;
+wire			ss_zram_we;
+wire			nZ80NMI_EN, Z80_nM1, Z80_nHALT;
+wire [31:0]	Z80_WINDOWS;
 
 wire [31:0]	screen_x_pos;
 wire [31:0]	screen_y_pos;
@@ -898,7 +907,7 @@ neo_d0 D0(
 	.nMREQ				(nMREQ),	
 	.nIORQ				(nIORQ),
 	.nZ80NMI				(nZ80NMI),
-	.nSDW					(nSDW), 
+	.nSDW					(nSDW & ~ss_z80_sdw),	// savestates set the NMI line too
 	.nSDZ80R				(nSDZ80R), 
 	.nSDZ80W				(nSDZ80W),	
 	.nSDZ80CLR			(nSDZ80CLR),
@@ -906,6 +915,7 @@ neo_d0 D0(
 	.nSDMRD				(nSDMRD), 
 	.nSDMWR				(nSDMWR), 
 	.nZRAMCS				(nZRAMCS),
+	.nZ80NMI_EN			(nZ80NMI_EN),
 	.SDRD0				(SDRD0),	
 	.SDRD1				(SDRD1),
 	.n2610CS				(n2610CS), 
@@ -995,14 +1005,44 @@ savestate savestate(
 	.ss_q						(ss_q),
 	.ss_ack					(ss_ack),
 	// Word n at 0xE7FF10 + 2n, as ss68k_stub.s reads them
-	.SHADOW					({64'd0, {12'd0, P_BANK}, ss_lspc_mode, ss_lspc_vrammod, ss_lspc_vram_addr,
+	.SHADOW					({{7'd0, ~nZ80NMI_EN, SDD_RD_C1}, Z80_WINDOWS, {12'd0, P_BANK},
+									  ss_lspc_mode, ss_lspc_vrammod, ss_lspc_vram_addr,
 									  {8'd0, PALBNK, ~nSRAMWEN, nSYSTEM, nREGEN, CARDWENB, nCARDWEN, nVEC, SHADOW}}),
 	.VRAM_ADDR				(ss_vram_addr),
 	.VRAM_WDATA				(ss_vram_wdata),
 	.SVRAM_WE				(ss_svram_we),
 	.FVRAM_WE				(ss_fvram_we),
 	.SVRAM_Q					(ss_svram_q),
-	.FVRAM_Q					(ss_fvram_q)
+	.FVRAM_Q					(ss_fvram_q),
+	.CLK_4M					(CLK_4M),
+	.CLK_8M					(CLK_8M),
+	.Z80_nRESET				(nRESET_WD),		// Z80_nRESET
+	.SDA						(SDA),
+	.nMREQ					(nMREQ),
+	.nIORQ					(nIORQ),
+	.nRD						(nSDRD),
+	.nWR						(nSDWR),
+	.nM1						(Z80_nM1),
+	.nHALT					(Z80_nHALT),
+	.SDD_OUT					(SDD_OUT),
+	.SDD_IN					(SDD_IN),
+	.n2610WR					(n2610WR),
+	.nNMI_LINE				(nZ80NMI),
+	.Z80_SDW					(ss_z80_sdw),
+	.Z80_NMI_N				(ss_z80_nmi_n),
+	.Z80_DIN_EN				(ss_z80_din_en),
+	.Z80_DIN					(ss_z80_din),
+	.Z80_INT_FORCE			(ss_z80_int_force),
+	.Z80_INT_MASK			(ss_z80_int_mask),
+	.run_z80					(ss_run_z80),
+	.YM_RUN					(ss_ym_run),
+	.YM_SS_Q					(ss_ym_q),
+	.YM_SS_LOAD				(ss_ym_load),
+	.YM_SS_D					(ss_ym_d),
+	.ZRAM_ADDR				(ss_zram_addr),
+	.ZRAM_WDATA				(ss_zram_wdata),
+	.ZRAM_WE					(ss_zram_we),
+	.ZRAM_Q					(ss_zram_q)
 );
 
 always @(posedge CLK_24M) begin
@@ -1091,7 +1131,8 @@ zmc ZMC(
 	.nSDRD0(SDRD0),
 	.SDA_L(SDA[1:0]), 
 	.SDA_U(SDA[15:8]),
-	.MA(MA)
+	.MA(MA),
+	.WINDOWS(Z80_WINDOWS)
 );
 
 // Bankswitching for the PORT zone, do all games use a 1MB window ?
@@ -1411,12 +1452,18 @@ spram_ss #(15,16) USV(
 wire [18:11] MA;
 wire [7:0] Z80_RAM_DATA;
 
-spram #(11) Z80RAM(
-	.clock		(CLK_4M), 
-	.address		(SDA[10:0]), 
-	.data			(SDD_OUT), 
-	.wren			(~(nZRAMCS | nSDMWR)), 
-	.q				(Z80_RAM_DATA));	// Fast enough ?
+// Port b is the savestate stub's (ss_z80)
+ss_dpram_2clk #(11, 8) Z80RAM(
+	.clock_a		(CLK_4M), 
+	.address_a	(SDA[10:0]), 
+	.data_a		(SDD_OUT), 
+	.wren_a		(~(nZRAMCS | nSDMWR)), 
+	.q_a			(Z80_RAM_DATA),	// Fast enough ?
+	.clock_b		(CLK_24M),
+	.address_b	(ss_zram_addr),
+	.data_b		(ss_zram_wdata),
+	.wren_b		(ss_zram_we),
+	.q_b			(ss_zram_q));
 
 assign SDD_IN = 	(~nSDZ80R) ? SDD_RD_C1 :
 						(~nSDMRD & ~nSDROM) ? M1_ROM_DATA :
@@ -1433,16 +1480,18 @@ cpu_z80 Z80CPU(
 	.CLK_4M	(CLK_4M),
 	.nRESET	(Z80_nRESET),
 	.SDA		(SDA), 
-	.SDD_IN	(SDD_IN), 
+	.SDD_IN	(ss_z80_din_en ? ss_z80_din : SDD_IN),	// savestates: the stub
 	.SDD_OUT	(SDD_OUT),
 	.nIORQ	(nIORQ),	
 	.nMREQ	(nMREQ),	
 	.nRD		(nSDRD), 
 	.nWR		(nSDWR),
-	.nINT		(nZ80INT), 
-	.nNMI		(nZ80NMI), 
+	.nINT		(ss_z80_int_force ? 1'b0 : (nZ80INT | ss_z80_int_mask)),
+	.nNMI		(ss_z80_nmi_n),	// nZ80NMI, but for savestates
 	.nWAIT	(z80_ready),
-	.CEN		(~HALT_4M)
+	.CEN		(~HALT_4M | ss_run_z80),
+	.nM1		(Z80_nM1),
+	.nHALT	(Z80_nHALT)
 );
 
 wire [19:0] ADPCMA_ADDR;
@@ -1556,7 +1605,7 @@ wire [7:0] YM2610_DOUT;
 jt10 YM2610(
 	.rst					(~nRESET_WD),
 	.clk					(CLK_8M), 
-	.cen					(&{ADPCMA_DATA_READY, ADPCMB_DATA_READY, ~HALT_8M}),
+	.cen					(&{ADPCMA_DATA_READY, ADPCMB_DATA_READY, ~HALT_8M | ss_ym_run}),
 	.addr					(SDA[1:0]),
 	.din					(SDD_OUT), 
 	.dout					(YM2610_DOUT),
@@ -1573,7 +1622,10 @@ jt10 YM2610(
 	.snd_right			(snd_right), 
 	.snd_left			(snd_left), 
 	.snd_enable			(snd_enable), 
-	.ch_enable			(ch_enable)
+	.ch_enable			(ch_enable),
+	.ss_q					(ss_ym_q),		// savestates: the timers
+	.ss_load				(ss_ym_load),
+	.ss_d					(ss_ym_d)
 );
 
 wire DOTA_GATED = DOTA;

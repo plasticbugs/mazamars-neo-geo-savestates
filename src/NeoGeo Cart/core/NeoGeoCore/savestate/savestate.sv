@@ -8,7 +8,9 @@
 // The 68k runs the stub while the rest of the machine stays halted for the
 // menu: run_68k overrides the CPU's halt from the request until the stub's
 // RTE has begun. The CPU then halts inside the RTE and finishes it when the
-// menu closes, or when the next request runs it.
+// menu closes, or when the next request runs it. The 68k stub asks for the
+// Z80 through ss_z80, which runs the Z80 (run_z80) and the YM2610 (YM_RUN)
+// the same way.
 
 module savestate
 (
@@ -69,7 +71,38 @@ module savestate
 	output				SVRAM_WE,
 	output				FVRAM_WE,
 	input		[15:0]	SVRAM_Q,
-	input		[15:0]	FVRAM_Q
+	input		[15:0]	FVRAM_Q,
+
+	// The Z80 (ss_z80), CLK_4M and CLK_8M
+	input					CLK_4M,
+	input					CLK_8M,
+	input					Z80_nRESET,
+	input		[15:0]	SDA,
+	input					nMREQ,			// refresh cycles excluded
+	input					nIORQ,
+	input					nRD,
+	input					nWR,
+	input					nM1,
+	input					nHALT,
+	input		[7:0]		SDD_OUT,
+	input		[7:0]		SDD_IN,
+	input					n2610WR,
+	input					nNMI_LINE,
+	output				Z80_SDW,
+	output				Z80_NMI_N,
+	output				Z80_DIN_EN,
+	output	[7:0]		Z80_DIN,
+	output				Z80_INT_FORCE,
+	output				Z80_INT_MASK,
+	output				run_z80,
+	output				YM_RUN,
+	input		[39:0]	YM_SS_Q,
+	output				YM_SS_LOAD,
+	output	[39:0]	YM_SS_D,
+	output	[10:0]	ZRAM_ADDR,		// Z80 RAM's second port, CLK_24M
+	output	[7:0]		ZRAM_WDATA,
+	output				ZRAM_WE,
+	input		[7:0]		ZRAM_Q
 );
 
 	// The command, clk_74a. A request crosses to CLK_24M as a toggle with
@@ -157,6 +190,9 @@ module savestate
 	wire [18:1] win_addr;
 	wire [15:0] win_wdata, win_rdata;
 	wire [1:0] win_be;
+	wire [15:1] aux_addr;
+	wire aux_we;
+	wire [15:0] aux_wdata, aux_q;
 
 	ss_m68k ss_m68k(
 		.CLK				(CLK_24M),
@@ -193,7 +229,48 @@ module savestate
 		.SVRAM_WE		(SVRAM_WE),
 		.FVRAM_WE		(FVRAM_WE),
 		.SVRAM_Q			(SVRAM_Q),
-		.FVRAM_Q			(FVRAM_Q)
+		.FVRAM_Q			(FVRAM_Q),
+		.AUX_ADDR		(aux_addr),
+		.AUX_WE			(aux_we),
+		.AUX_WDATA		(aux_wdata),
+		.AUX_Q			(aux_q)
+	);
+
+	ss_z80 ss_z80(
+		.CLK_4M			(CLK_4M),
+		.nRESET			(Z80_nRESET),
+		.SDA				(SDA),
+		.nMREQ			(nMREQ),
+		.nIORQ			(nIORQ),
+		.nRD				(nRD),
+		.nWR				(nWR),
+		.nM1				(nM1),
+		.nHALT			(nHALT),
+		.SDD_OUT			(SDD_OUT),
+		.SDD_IN			(SDD_IN),
+		.n2610WR			(n2610WR),
+		.nNMI_LINE		(nNMI_LINE),
+		.SDW				(Z80_SDW),
+		.NMI_N			(Z80_NMI_N),
+		.DIN_EN			(Z80_DIN_EN),
+		.DIN				(Z80_DIN),
+		.INT_FORCE		(Z80_INT_FORCE),
+		.INT_MASK		(Z80_INT_MASK),
+		.run				(run_z80),
+		.YM_RUN			(YM_RUN),
+		.CLK_8M			(CLK_8M),
+		.YM_SS_Q			(YM_SS_Q),
+		.YM_SS_LOAD		(YM_SS_LOAD),
+		.YM_SS_D			(YM_SS_D),
+		.CLK_24M			(CLK_24M),
+		.AUX_ADDR		(aux_addr),
+		.AUX_WE			(aux_we),
+		.AUX_WDATA		(aux_wdata),
+		.AUX_Q			(aux_q),
+		.ZRAM_ADDR		(ZRAM_ADDR),
+		.ZRAM_WDATA		(ZRAM_WDATA),
+		.ZRAM_WE			(ZRAM_WE),
+		.ZRAM_Q			(ZRAM_Q)
 	);
 
 	ss_mem ss_mem(

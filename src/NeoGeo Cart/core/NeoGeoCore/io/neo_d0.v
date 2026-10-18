@@ -37,6 +37,7 @@ module neo_d0(
 	output SDRD0, SDRD1,
 	output n2610CS, n2610RD, n2610WR,
 	output nZRAMCS,
+	output nZ80NMI_EN,				// for savestates: z80ctrl's NMI enable, low on
 	output [2:0] BNK,
 	output [2:0] P1_OUT,
 	output [2:0] P2_OUT
@@ -49,7 +50,8 @@ module neo_d0(
 	
 	// Z80 controller part
 	z80ctrl Z80CTRL(SDA_L, SDA_H, nSDRD, nSDWR, nMREQ, nIORQ, nSDW, nRESET, nZ80NMI, nSDZ80R, nSDZ80W,
-				nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1, n2610CS, n2610RD, n2610WR, nZRAMCS);
+				nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1, n2610CS, n2610RD, n2610WR, nZRAMCS,
+				nZ80NMI_EN);
 	
 	assign {P2_OUT, P1_OUT} = nRESETP ? REG_OUT : 6'b000000;
 	assign BNK = nRESETP ? REG_BNK : 3'b000;

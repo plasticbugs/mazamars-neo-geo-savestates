@@ -8,6 +8,7 @@
 //   0xE00000-0xE3FFFF  stub code (512 words, mirrored)
 //   0xE40000-0xE4FFFF  slow VRAM, 32K words (the VRAM's second port)
 //   0xE50000-0xE5FFFF  fast VRAM, 2K words, mirrored
+//   0xE60000-0xE6FFFF  AUX: the Z80's side (ss_z80)
 //   0xE7FF00           read: {15'b0, load}.  write: the stub is finished
 //   0xE7FF10-0xE7FF1F  read: SHADOW, 8 words of write-only registers
 //   0xE80000-0xEFFFFF  the window: win_* requests to the savestate buffer
@@ -61,7 +62,13 @@ module ss_m68k
 	output reg			SVRAM_WE,
 	output reg			FVRAM_WE,
 	input		[15:0]	SVRAM_Q,			// one clock after VRAM_ADDR
-	input		[15:0]	FVRAM_Q
+	input		[15:0]	FVRAM_Q,
+
+	// ss_z80's AUX port
+	output	[15:1]	AUX_ADDR,
+	output reg			AUX_WE,
+	output	[15:0]	AUX_WDATA,
+	input		[15:0]	AUX_Q				// one clock after AUX_ADDR
 );
 
 	localparam [23:0] STUB_BASE = 24'hE00000;
@@ -71,12 +78,15 @@ module ss_m68k
 	wire is_stub	= region_e & ~M68K_ADDR[19] & ~M68K_ADDR[18];
 	wire is_vram	= region_e & ~M68K_ADDR[19] & M68K_ADDR[18] & ~M68K_ADDR[17];
 	wire is_fast	= M68K_ADDR[16];
+	wire is_aux		= region_e & ~M68K_ADDR[19] & M68K_ADDR[18] & M68K_ADDR[17] & ~M68K_ADDR[16];
 	wire is_ctrl	= region_e & (M68K_ADDR[19:1] == 19'h3FF80);
 	wire is_shadow	= region_e & (M68K_ADDR[19:4] == 16'h7FF1);
 	wire [15:0] shadow_q = SHADOW[{M68K_ADDR[3:1], 4'd0} +: 16];
 
 	assign VRAM_ADDR = is_fast ? {4'd0, M68K_ADDR[11:1]} : M68K_ADDR[15:1];
 	assign VRAM_WDATA = M68K_DOUT;
+	assign AUX_ADDR = M68K_ADDR[15:1];
+	assign AUX_WDATA = M68K_DOUT;
 	reg [1:0] vram_wait;
 	reg [15:0] vram_q;
 	wire iack7		= FC2 & FC1 & FC0 & ~nAS & (M68K_ADDR[3:1] == 3'd7);
@@ -113,6 +123,7 @@ module ss_m68k
 			win_wr <= 1'b0;
 			SVRAM_WE <= 1'b0;
 			FVRAM_WE <= 1'b0;
+			AUX_WE <= 1'b0;
 			vram_wait <= 2'd0;
 		end
 		else begin
@@ -121,6 +132,7 @@ module ss_m68k
 			win_wr <= 1'b0;
 			SVRAM_WE <= 1'b0;
 			FVRAM_WE <= 1'b0;
+			AUX_WE <= 1'b0;
 
 			if (start & ~busy) begin
 				busy <= 1'b1;
@@ -154,8 +166,12 @@ module ss_m68k
 					win_wdata <= M68K_DOUT;
 					win_be <= {~nUDS, ~nLDS};
 				end
-				else if (is_vram & busy & M68K_RW)
+				else if ((is_vram | is_aux) & busy & M68K_RW)
 					vram_wait <= 2'd2;			// the RAM's address is in by now
+				else if (is_aux & busy) begin	// whole words, as for VRAM
+					AUX_WE <= 1'b1;
+					cyc_ready <= 1'b1;
+				end
 				else if (is_vram & busy) begin	// whole words: the stub moves no bytes there
 					SVRAM_WE <= ~is_fast;
 					FVRAM_WE <= is_fast;
@@ -177,7 +193,7 @@ module ss_m68k
 			else if (vram_wait != 2'd0) begin
 				vram_wait <= vram_wait - 1'd1;
 				if (vram_wait == 2'd1) begin
-					vram_q <= is_fast ? FVRAM_Q : SVRAM_Q;
+					vram_q <= is_aux ? AUX_Q : is_fast ? FVRAM_Q : SVRAM_Q;
 					cyc_ready <= 1'b1;
 				end
 			end
@@ -191,7 +207,7 @@ module ss_m68k
 					 is_ctrl ? {15'd0, load} :
 					 is_shadow ? shadow_q :
 					 is_stub ? stub_q :
-					 is_vram ? vram_q :
+					 (is_vram | is_aux) ? vram_q :
 					 is_win ? win_q :
 					 16'h0000;
 

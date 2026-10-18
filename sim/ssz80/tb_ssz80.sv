@@ -87,10 +87,12 @@ module tb_ssz80(
 	// The machine's Z80 decode and banks
 	wire nSDZ80R, nSDZ80W, nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1;
 	wire n2610CS, n2610RD, n2610WR, nZRAMCS;
+	wire nNMI_EN_Q;
 	z80ctrl Z80CTRL(SDA[4:2], SDA[15:11], nRD, nWR, nMREQ, nIORQ, nSDW & ~ss_sdw, nRESET, nZ80NMI, nSDZ80R, nSDZ80W,
-				nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1, n2610CS, n2610RD, n2610WR, nZRAMCS);
+				nSDZ80CLR, nSDROM, nSDMRD, nSDMWR, SDRD0, SDRD1, n2610CS, n2610RD, n2610WR, nZRAMCS,
+				nNMI_EN_Q);
 	wire [18:11] MA;
-	zmc ZMC(.nRESET(nRESET), .nSDRD0(SDRD0), .SDA_L(SDA[1:0]), .SDA_U(SDA[15:8]), .MA(MA));
+	zmc ZMC(.nRESET(nRESET), .nSDRD0(SDRD0), .SDA_L(SDA[1:0]), .SDA_U(SDA[15:8]), .MA(MA), .WINDOWS());
 
 	// The latches (c1_regs.v): the command, which a port 0 write clears,
 	// and the reply

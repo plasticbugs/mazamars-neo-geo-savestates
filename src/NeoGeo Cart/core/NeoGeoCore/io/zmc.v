@@ -23,7 +23,8 @@ module zmc(
 	input nSDRD0,
 	input [1:0] SDA_L,
 	input [15:8] SDA_U,
-	output [18:11] MA
+	output [18:11] MA,
+	output [31:0] WINDOWS			// for savestates: {3, 2, 1, 0}, a byte each
 );
 
 	//      Z80         ROM          Region	Reg
@@ -36,6 +37,7 @@ module zmc(
 	reg [6:0] WINDOW_1;
 	reg [5:0] WINDOW_2;
 	reg [4:0] WINDOW_3;
+	assign WINDOWS = {3'd0, WINDOW_3, 2'd0, WINDOW_2, 1'd0, WINDOW_1, WINDOW_0};
 	
 	assign MA = (~SDA_U[15]) ? {3'b000, SDA_U[15:11]} :     		// Pass-through
 			(SDA_U[15:12] == 4'b1111) ? WINDOW_0 :						// F000~F7FF

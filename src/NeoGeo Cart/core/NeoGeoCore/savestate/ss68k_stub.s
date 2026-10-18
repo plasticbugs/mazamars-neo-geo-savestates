@@ -11,6 +11,12 @@
 |       and frame), load USP, SSP and D0-A6, RTE: the CPU resumes at the
 |       saved PC with the saved SR.
 |
+| The Z80 (ss_z80.sv, ssz80_stub.asm): ask for it (ZREQ), wait until it
+| parks, copy its RAM and the YM2610 shadow out or in, tell it to resume or
+| load, wait until it leaves its stub. Every wait gives up after ~0.1 s; a
+| save then records no Z80 (WZOK 0), and loading such a snapshot leaves the
+| Z80 as it is.
+|
 | No subroutines: a BSR would leave its return address below the game's
 | stack, in the work RAM being saved.
 |
@@ -33,6 +39,28 @@
         .equ    WPAL,   WIN+0x11000     | palette banks 0 and 1, 8 KB each
         .equ    WSVRAM, WIN+0x15000     | slow VRAM, 64 KB
         .equ    WFVRAM, WIN+0x25000     | fast VRAM, 4 KB
+        .equ    WZOK,   WIN+0x120       | 1: the Z80 part below was saved
+        .equ    WZSP,   WIN+0x122       | its SP, parked
+        .equ    WZNMI,  WIN+0x124       | bit 0 NMI on, 1 line low, 2 input held low
+        .equ    WZREP,  WIN+0x126       | the reply latch
+        .equ    WZYM,   WIN+0x128       | the YM2610's timers, 3 words
+        .equ    WZRAM,  WIN+0x26000     | Z80 RAM, a byte a word, 4 KB
+        .equ    WYM,    WIN+0x27000     | the YM2610 shadow, a byte a word, 1 KB
+
+        | ss_z80's AUX port: the shadow words 5-7 are its ROM banks {1,0},
+        | {3,2} and {NMI enable, command latch}
+        .equ    ZRAM,   0xE60000
+        .equ    ZYM,    0xE61000
+        .equ    ZSTAT,  0xE62000        | read: bit 0 parked, 1 exited, 2 line low,
+                                        | 3 input held low.  write: ZREQ
+        .equ    ZSP,    0xE62002
+        .equ    ZCMD,   0xE62004        | 1 resume, 2 load
+        .equ    ZNMI,   0xE62006
+        .equ    ZREP,   0xE62008
+        .equ    ZBANK,  0xE6200A        | 4 words
+        .equ    ZTIMER, 0xE62012        | 3 words
+        .equ    ZWAIT,  0x8000          | ~0.1 s of polling
+        .equ    SOUND,  0x320000        | read: the reply.  write: the command
 
         .equ    PALRAM,   0x400000
         .equ    PALBANK0, 0x3A000F
@@ -49,6 +77,17 @@
         move.w  #\longs-1, %d0
 1:      move.l  (%a0)+, (%a1)+
         dbra    %d0, 1b
+        .endm
+
+        | Wait until ZSTAT bit \bit is set, or branch to \fail
+        .macro  zwait bit, fail
+        move.l  #ZWAIT, %d1
+1:      btst    #\bit, ZSTAT+1
+        bne.s   2f
+        subq.l  #1, %d1
+        bne.s   1b
+        bra     \fail
+2:
         .endm
 
         .text
@@ -73,6 +112,34 @@ save:
         move.b  %d0, PALBANK0
 2:      copy    SVRAM, WSVRAM, 0x4000
         copy    FVRAM, WFVRAM, 0x400
+
+        clr.w   WZOK                    | the Z80, after the shadows (its NMI enable)
+        move.w  #1, ZSTAT
+        zwait   0, 9f
+        move.w  ZSP, WZSP
+        moveq   #0, %d0
+        move.b  WSHAD+0x0E, %d0         | bit 0: NMI enabled
+        move.w  ZSTAT, %d2
+        btst    #2, %d2
+        beq.s   3f
+        bset    #1, %d0
+3:      btst    #3, %d2
+        beq.s   4f
+        bset    #2, %d0
+4:      move.w  %d0, WZNMI
+        move.w  %d0, ZNMI               | the stub restores the NMI enable from it
+        moveq   #0, %d0
+        move.b  SOUND, %d0
+        move.w  %d0, WZREP
+        copy    ZRAM, WZRAM, 0x400
+        copy    ZYM, WYM, 0x100
+        move.w  #1, ZCMD                | resume
+        zwait   1, 9f
+        move.w  ZTIMER, WZYM
+        move.w  ZTIMER+2, WZYM+2
+        move.w  ZTIMER+4, WZYM+4
+        move.w  #1, WZOK
+9:
         movem.l REGS, %d0-%d7/%a0-%a6
         move.w  #1, CTRL
         rte
@@ -99,6 +166,32 @@ load:
         move.w  WSHAD+6, LSPCMODE
         move.w  WSHAD+2, VRAMADDR
         move.w  WSHAD+8, PBANK
+
+        tst.w   WZOK                    | the Z80, if the snapshot has it
+        beq     9f
+        move.w  #1, ZSTAT
+        zwait   0, 9f
+        copy    WZRAM, ZRAM, 0x400
+        copy    WYM, ZYM, 0x100
+        move.b  WSHAD+0x0F, SOUND       | the command latch; the Z80 has NMIs off
+        move.w  WZSP, ZSP
+        move.w  WZNMI, ZNMI
+        move.w  WZREP, ZREP
+        moveq   #0, %d0
+        move.b  WSHAD+0x0B, %d0         | the banks: word 5 is {1, 0}, 6 is {3, 2}
+        move.w  %d0, ZBANK
+        move.b  WSHAD+0x0A, %d0
+        move.w  %d0, ZBANK+2
+        move.b  WSHAD+0x0D, %d0
+        move.w  %d0, ZBANK+4
+        move.b  WSHAD+0x0C, %d0
+        move.w  %d0, ZBANK+6
+        move.w  WZYM, ZTIMER
+        move.w  WZYM+2, ZTIMER+2
+        move.w  WZYM+4, ZTIMER+4
+        move.w  #2, ZCMD                | load
+        zwait   1, 9f
+9:
         move.l  USPV, %a0
         move.l  %a0, %usp
         movea.l SSPV, %sp
