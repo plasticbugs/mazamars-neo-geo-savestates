@@ -2,6 +2,26 @@
 
 This is the port of the Neogeo Core made by [Furrtek](https://www.patreon.com/furrtek/posts) to the Analogue Pocket using the APF framework and some of my own code.
 
+## Savestates (this fork, 0.8.1-savestates.1)
+
+This fork of [Mazamars312's core](https://github.com/Mazamars312/Analogue_Pocket_Neogeo) adds
+save states (Pocket Memories) and a pause while the Pocket's menu is open. Save with
+Analogue + Up, load with Analogue + Down. The game freezes for about a tenth of a second
+while a state is made.
+
+A state holds the 68000 (registers, work RAM), the picture (palette, both VRAMs, the system
+latch, the LSPC's registers), the P-ROM bank, and the Z80 side (registers, RAM, ROM banks,
+NMI, the sound latches, the YM2610's registers and timers).
+
+- Tested on hardware: Metal Slug.
+- Not saved yet: the extra chips of SMA and PVC cartridges (KOF '99, KOF 2000, Garou, Metal
+  Slug 3; Metal Slug 5, SNK vs. Capcom, KOF 2003), so loading in those games is likely to
+  fail; the LSPC timer (raster effects may be wrong for a frame or two after a load);
+  ADPCM and SSG sound (notes and samples playing at the save restart).
+- Backup RAM and the memory card are not part of a state.
+
+The design and how it is checked in simulation: [docs/savestate-design.md](docs/savestate-design.md).
+
 ### NOTE! read the installation and Usage as the default Bios file has changed and saves can cause an issue. 
 
 ## Bug fixes in 0.8.1
