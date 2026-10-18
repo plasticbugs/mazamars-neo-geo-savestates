@@ -19,8 +19,8 @@ Each state records the game and BIOS it came from. Loading a state from another 
 version of the game or another BIOS is refused ("Load failed") and the game carries on.
 States made with 0.8.1-savestates.1 are refused for the same reason: make new ones.
 
-- Tested on hardware: Metal Slug (savestates.1). The chip support and the game check are
-  tested in simulation.
+- Tested on hardware, save and load: Metal Slug, Neo Turf Masters, Garou (SMA chip),
+  KOF '99 (SMA chip) and Metal Slug 5 (PVC chip).
 - Not saved yet: the LSPC timer (raster effects may be wrong for a frame or two after a
   load); ADPCM and SSG sound (notes and samples playing at the save restart); the PRO-CT0
   protection chip of Fatal Fury 2 and Super Sidekicks, which holds state only during a

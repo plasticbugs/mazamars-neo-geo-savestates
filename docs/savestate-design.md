@@ -229,5 +229,6 @@ hardware.
 3. Window and buffer in CRAM0, Pocket handshake, 68k-only state on hardware
    (registers + work RAM + palette + VRAM + LSPC shadows).
 4. Z80 + YM2610 (in both benches; hardware test pending).
-5. Cart chips: SMA and PVC (in `sim/savestate`, `SS_CHIP`; hardware test
-   pending). Then memory card, backup RAM.
+5. Cart chips: SMA and PVC (in `sim/savestate`, `SS_CHIP`; on hardware,
+   Garou and KOF '99 for the SMA, Metal Slug 5 for the PVC). Then memory
+   card, backup RAM.
