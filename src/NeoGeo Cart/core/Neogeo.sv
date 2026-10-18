@@ -373,7 +373,8 @@ wire			osnotify_inmenu;
 // Halt: the Pocket's menu stops the CPUs, the YM2610 and the watchdog, and the
 // game carries on where it was when the menu closes. The video chips keep
 // running, so the picture stays up behind the menu.
-wire			cpu_halt = osnotify_inmenu;
+wire			ss_hold;
+wire			cpu_halt = osnotify_inmenu | ss_hold;	// the menu, or a savestate
 reg [1:0]	halt_24m_sr, halt_4m_sr, halt_8m_sr;
 always @(posedge CLK_24M) halt_24m_sr <= {halt_24m_sr[0], cpu_halt};
 always @(posedge CLK_4M)  halt_4m_sr  <= {halt_4m_sr[0], cpu_halt};
@@ -977,6 +978,7 @@ savestate savestate(
 	.savestate_load_busy	(savestate_load_busy),
 	.savestate_load_ok	(savestate_load_ok),
 	.savestate_load_err	(savestate_load_err),
+	.hold						(ss_hold),
 	.M68K_ADDR				(M68K_ADDR),
 	.nAS						(nAS),
 	.M68K_RW					(M68K_RW),

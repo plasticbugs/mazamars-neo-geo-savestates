@@ -18,6 +18,11 @@
 // loadsave: load as above, scribble over the buffer, then ask for a save
 //       with the menu still open and read it into state2.bin.
 //
+// SS_QUICK: never open the menu, as the Pocket's Analogue + Up and Down
+// save and load: the machine runs on but for the request itself. Every
+// request must leave the game's watchdog (8 frames) unexpired.
+// SS_NO_HOLD: the bench without savestate.sv's hold, to show it matters.
+//
 // Bridge reads are pipelined, as Analogue documents them: the data for a
 // read strobe is taken at the next transaction, just before its strobe.
 // BRIDGE_GAP sets the clk_74a cycles from one strobe to the next address.
@@ -156,8 +161,13 @@ static void write_buffer(const std::vector<uint32_t> &w) {
 	if (bad) { fprintf(stderr, "bridge write: %ld words wrong\n", bad); exit(1); }
 }
 
+// The watchdog resets the machine 8 frames (405504 CLK_24M cycles each)
+// after its last kick; it may count the first frame from just before it
+static const uint32_t WD_LIMIT = 7 * 405504;
+
 // A save (load = false) or a load, the way core_bridge_cmd asks for one
 static void command(bool load) {
+	r->tb_savestate__DOT__wd_max = 0;
 	const char *what = load ? "load" : "save";
 	const int slatch = r->tb_savestate__DOT__slatch;
 	(load ? m->savestate_load : m->savestate_start) = 1;
@@ -181,6 +191,11 @@ static void command(bool load) {
 		exit(1);
 	}
 	fprintf(stderr, "%s: ok after %.2f ms\n", what, t * 2 * HALF_74 / 1e9);
+	if (m->WD_MAX > WD_LIMIT) {
+		fprintf(stderr, "%s: the watchdog went %.1f frames unkicked: the machine would have reset\n",
+				  what, m->WD_MAX / 405504.0);
+		exit(1);
+	}
 }
 
 static void write_file(const char *name, const std::vector<uint32_t> &w) {
@@ -204,6 +219,36 @@ static std::vector<uint32_t> read_file(const char *name) {
 
 static uint32_t x = 0x12345678;
 static uint32_t noise() { x ^= x << 13; x ^= x >> 17; x ^= x << 5; return x; }
+
+// Before a load: what the stubs restore, to noise
+static void scribble_68k() {
+	for (int i = 0; i < 32768; i++) r->tb_savestate__DOT__ram[i] = noise();
+	// D0-D7, A0-A6, USP (FX68K slots 0-15) to noise, SSP (16) elsewhere in work RAM
+	auto &rl = r->tb_savestate__DOT__dut__DOT__FX68K__DOT__excUnit__DOT__regs68L;
+	auto &rh = r->tb_savestate__DOT__dut__DOT__FX68K__DOT__excUnit__DOT__regs68H;
+	for (int i = 0; i < 16; i++) { uint32_t v = noise(); rl[i] = v; rh[i] = v >> 16; }
+	rh[16] = 0x0010; rl[16] = 0x1000 + (noise() & 0xDFFE);
+	// And the rest of what the stub restores
+	r->tb_savestate__DOT__slatch = noise();
+	for (int i = 0; i < 8192; i++) r->tb_savestate__DOT__pal[i] = noise();
+	for (int i = 0; i < 32768; i++) r->tb_savestate__DOT__svram[i] = noise();
+	for (int i = 0; i < 2048; i++) r->tb_savestate__DOT__fvram[i] = noise();
+	r->tb_savestate__DOT__vramaddr = noise();
+	r->tb_savestate__DOT__vrammod = noise();
+	r->tb_savestate__DOT__lspcmode = noise();
+	r->tb_savestate__DOT__p_bank = noise() & 15;
+}
+
+static void scribble_z80() {
+	for (int i = 0; i < 2048; i++) r->tb_savestate__DOT__Z80RAM__DOT__memory[i] = noise();
+	r->tb_savestate__DOT__ZMC__DOT__WINDOW_0 = noise();
+	r->tb_savestate__DOT__ZMC__DOT__WINDOW_1 = noise() & 0x7F;
+	r->tb_savestate__DOT__ZMC__DOT__WINDOW_2 = noise() & 0x3F;
+	r->tb_savestate__DOT__ZMC__DOT__WINDOW_3 = noise() & 0x1F;
+	r->tb_savestate__DOT__Z80CTRL__DOT__nNMI_EN = noise() & 1;
+	r->tb_savestate__DOT__cmd_latch = noise();
+	r->tb_savestate__DOT__rep_latch = noise();
+}
 
 int main(int argc, char **argv) {
 	if (argc < 7) { fprintf(stderr, "usage: %s bios m1rom save|load|loadsave at log state.bin [state2.bin]\n", argv[0]); return 2; }
@@ -242,6 +287,8 @@ int main(int argc, char **argv) {
 
 	// A falling edge on nRESET: the asynchronous resets (z80ctrl's NMI flop)
 	// act on the edge here, though on the chip they follow the level
+	const bool quick = getenv("SS_QUICK") != nullptr;
+	m->no_hold = getenv("SS_NO_HOLD") != nullptr;
 	m->nRESET = 1; m->menu = 0; m->clk_74a = 0; m->clk_sys = 0;
 	for (int i = 0; i < 20; i++) tick74();
 	m->nRESET = 0;
@@ -250,30 +297,19 @@ int main(int argc, char **argv) {
 	while (bus < at) tick74();
 	while (!m->nAS) tick74();
 
-	if (load) {
-		for (int i = 0; i < 32768; i++) r->tb_savestate__DOT__ram[i] = noise();
-		// D0-D7, A0-A6, USP (FX68K slots 0-15) to noise, SSP (16) elsewhere in work RAM
-		auto &rl = r->tb_savestate__DOT__dut__DOT__FX68K__DOT__excUnit__DOT__regs68L;
-		auto &rh = r->tb_savestate__DOT__dut__DOT__FX68K__DOT__excUnit__DOT__regs68H;
-		for (int i = 0; i < 16; i++) { uint32_t v = noise(); rl[i] = v; rh[i] = v >> 16; }
-		rh[16] = 0x0010; rl[16] = 0x1000 + (noise() & 0xDFFE);
-		// And the rest of what the stub restores
-		r->tb_savestate__DOT__slatch = noise();
-		for (int i = 0; i < 8192; i++) r->tb_savestate__DOT__pal[i] = noise();
-		for (int i = 0; i < 32768; i++) r->tb_savestate__DOT__svram[i] = noise();
-		for (int i = 0; i < 2048; i++) r->tb_savestate__DOT__fvram[i] = noise();
-		r->tb_savestate__DOT__vramaddr = noise();
-		r->tb_savestate__DOT__vrammod = noise();
-		r->tb_savestate__DOT__lspcmode = noise();
-		r->tb_savestate__DOT__p_bank = noise() & 15;
-	}
+	// With the menu, scribble over the 68k's side now and the Z80's once it
+	// halts; without it, both just before the request, so that neither CPU
+	// runs on noise for long first, which a real load never meets
+	if (load && !quick) scribble_68k();
 
-	m->menu = 1;
-	for (int i = 0; i < 1000; i++) tick74();
-	uint32_t halted_at = m->CPU_TIME;
-	for (int i = 0; i < 100; i++) tick74();
-	if (m->CPU_TIME != halted_at) { fprintf(stderr, "the menu did not halt the CPU\n"); return 1; }
-	fprintf(stderr, "%s: menu open at bus cycle %ld\n", mode, bus);
+	if (!quick) {
+		m->menu = 1;
+		for (int i = 0; i < 1000; i++) tick74();
+		uint32_t halted_at = m->CPU_TIME;
+		for (int i = 0; i < 100; i++) tick74();
+		if (m->CPU_TIME != halted_at) { fprintf(stderr, "the menu did not halt the CPU\n"); return 1; }
+	}
+	fprintf(stderr, "%s: %s at bus cycle %ld\n", mode, quick ? "no menu" : "menu open", bus);
 
 	if (!load) {
 		phase = 1;
@@ -283,16 +319,13 @@ int main(int argc, char **argv) {
 		write_file(state, read_buffer());
 	}
 	else {
-		// The Z80's side, now that it is halted
-		for (int i = 0; i < 2048; i++) r->tb_savestate__DOT__Z80RAM__DOT__memory[i] = noise();
-		r->tb_savestate__DOT__ZMC__DOT__WINDOW_0 = noise();
-		r->tb_savestate__DOT__ZMC__DOT__WINDOW_1 = noise() & 0x7F;
-		r->tb_savestate__DOT__ZMC__DOT__WINDOW_2 = noise() & 0x3F;
-		r->tb_savestate__DOT__ZMC__DOT__WINDOW_3 = noise() & 0x1F;
-		r->tb_savestate__DOT__Z80CTRL__DOT__nNMI_EN = noise() & 1;
-		r->tb_savestate__DOT__cmd_latch = noise();
-		r->tb_savestate__DOT__rep_latch = noise();
+		if (!quick) scribble_z80();
 		write_buffer(read_file(state));
+		if (quick) {
+			while (!m->nAS) tick74();
+			scribble_68k();
+			scribble_z80();
+		}
 		phase = 1;
 		command(true);
 		phase = 2;
@@ -310,9 +343,11 @@ int main(int argc, char **argv) {
 
 	// Close the menu at the same phase of the clocks in every run: the CPUs
 	// then start again in the same relation to each other
-	for (int i = 0; i < 1000; i++) tick74();
-	do edge(); while (!(sys_rose && m->DIV == 0));
-	m->menu = 0;
+	if (!quick) {
+		for (int i = 0; i < 1000; i++) tick74();
+		do edge(); while (!(sys_rose && m->DIV == 0));
+		m->menu = 0;
+	}
 	while (logged < want) tick74();
 	fclose(ztrace);
 	fprintf(stderr, "%s: %ld bus cycles logged, %ld of the Z80's\n", mode, logged, zlogged);

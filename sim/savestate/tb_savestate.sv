@@ -13,6 +13,7 @@ module tb_savestate(
 	input					clk_sys,
 	input					nRESET,
 	input					menu,				// osnotify_inmenu
+	input					no_hold,			// a mutant: savestates without ss_hold
 
 	input					savestate_start,
 	output				savestate_start_ack,
@@ -52,7 +53,8 @@ module tb_savestate(
 	output				nWR,
 	output				nM1,
 	output	[31:0]	Z80_TIME,
-	output	[4:0]		DIV				// clk_sys mod 24: the clocks' phase
+	output	[4:0]		DIV,				// clk_sys mod 24: the clocks' phase
+	output	[31:0]	WD_MAX			// the watchdog's longest run, CLK_24M cycles
 );
 
 	// CLK_24M, CLK_8M and CLK_4M from one divider, in phase as the core's
@@ -67,10 +69,13 @@ module tb_savestate(
 	assign CLK_24M = div[1];
 	assign DIV = div;
 
+	// The menu, or a savestate request (ss_hold), halts the machine
+	wire ss_hold;
+	wire cpu_halt = menu | (ss_hold & ~no_hold);
 	reg [1:0] halt_24m_sr = 2'b00, halt_4m_sr = 2'b00, halt_8m_sr = 2'b00;
-	always @(posedge CLK_24M) halt_24m_sr <= {halt_24m_sr[0], menu};
-	always @(posedge CLK_4M) halt_4m_sr <= {halt_4m_sr[0], menu};
-	always @(posedge CLK_8M) halt_8m_sr <= {halt_8m_sr[0], menu};
+	always @(posedge CLK_24M) halt_24m_sr <= {halt_24m_sr[0], cpu_halt};
+	always @(posedge CLK_4M) halt_4m_sr <= {halt_4m_sr[0], cpu_halt};
+	always @(posedge CLK_8M) halt_8m_sr <= {halt_8m_sr[0], cpu_halt};
 	wire HALT_24M = halt_24m_sr[1], HALT_4M = halt_4m_sr[1], HALT_8M = halt_8m_sr[1];
 
 	reg [15:0] rom [0:65535];				// BIOS, word-swapped on load by the C++ side
@@ -161,6 +166,7 @@ module tb_savestate(
 		.savestate_load_busy	(savestate_load_busy),
 		.savestate_load_ok	(savestate_load_ok),
 		.savestate_load_err	(savestate_load_err),
+		.hold						(ss_hold),
 		.M68K_ADDR				(ADDR),
 		.nAS						(nAS),
 		.M68K_RW					(RW),
@@ -432,6 +438,19 @@ module tb_savestate(
 	always @(posedge CLK_4M)
 		if (!nRESET) z80_time <= 32'd0;
 		else if (~HALT_4M | ss_run_z80) z80_time <= z80_time + 1'd1;
+
+	// The watchdog (watchdog.v) counts frames while the machine is not halted
+	// and resets it at 8, about 3.24M CLK_24M cycles, unless a write to
+	// 0x300001 kicks it. Here it only measures the longest run between kicks
+	// (the C++ side zeroes it).
+	reg [31:0] wd_count = 32'd0, wd_max = 32'd0;
+	assign WD_MAX = wd_max;
+	always @(posedge CLK_24M)
+		if (!nRESET || (!nAS && !RW && !nLDS && byte_addr[23:17] == 7'b0011000)) wd_count <= 32'd0;
+		else if (!HALT_24M) begin
+			wd_count <= wd_count + 1'd1;
+			if (wd_count >= wd_max) wd_max <= wd_count + 1'd1;
+		end
 
 	reg [31:0] cpu_time;
 	assign CPU_TIME = cpu_time;

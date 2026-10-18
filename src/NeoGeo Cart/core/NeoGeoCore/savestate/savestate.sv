@@ -5,9 +5,12 @@
 // to or from the buffer (ss_mem). For a save the Pocket then reads the buffer
 // over the bridge at 0x80000000; for a load it has written it there first.
 //
-// The 68k runs the stub while the rest of the machine stays halted for the
-// menu: run_68k overrides the CPU's halt from the request until the stub's
-// RTE has begun. The CPU then halts inside the RTE and finishes it when the
+// The 68k runs the stub while the rest of the machine stays halted: hold
+// halts it as the menu does, from the request until the stub is done, for a
+// save or load asked without the menu (the Pocket's Analogue + Up and Down);
+// otherwise the game cannot kick its watchdog meanwhile, which resets the
+// machine after 8 frames. run_68k overrides the CPU's halt from the request
+// until the stub's RTE has begun. The CPU then halts inside the RTE and finishes it when the
 // menu closes, or when the next request runs it. The 68k stub asks for the
 // Z80 through ss_z80, which runs the Z80 (run_z80) and the YM2610 (YM_RUN)
 // the same way.
@@ -30,6 +33,7 @@ module savestate
 	output reg			savestate_load_busy,
 	output reg			savestate_load_ok,
 	output reg			savestate_load_err,
+	output				hold,				// halt the machine, as the menu does
 
 	// The 68k bus, at the CPU
 	input		[23:1]	M68K_ADDR,
@@ -113,6 +117,7 @@ module savestate
 	reg [2:0] done_s = 3'b000;
 	reg [26:0] timer;					// 1.8 s at 74.25 MHz
 	wire done_t;
+	assign hold = active;
 
 	always @(posedge clk_74a) begin
 		start_r <= savestate_start;
