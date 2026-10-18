@@ -1,8 +1,10 @@
 # Savestates (Pocket Memories): design
 
 Status: pause built; the 68k side of savestates built and simulated (registers,
-work RAM, palette, VRAM, system latch, LSPC registers, P-ROM bank); Z80 and
-YM2610 to do. Primary target: Metal Slug (`mslug`).
+work RAM, palette, VRAM, system latch, LSPC registers, P-ROM bank); the Z80
+side (registers, RAM, ROM banks, NMI, latches, YM2610 registers and timers)
+simulated and synthesized, not yet fitted. Primary target: Metal Slug
+(`mslug`).
 
 ## The idea: the CPUs save themselves
 
@@ -21,7 +23,7 @@ visible to the CPUs through the machine's own buses:
 | Slow + fast VRAM | 68 KB | the VRAMs' second port, in the stub's region (0xE40000, 0xE50000): no LSPC slot timing to meet |
 | Memory card | 2-8 KB | 68k, 0x800000 |
 | Backup RAM (MVS) | 64 KB | 68k, 0xD00000 |
-| Z80 registers, RAM | 2 KB + regs | the Z80, in an NMI stub |
+| Z80 registers, RAM | 2 KB + regs | the Z80, in a stub entered by RST 38h (registers); RAM on its second port |
 | Write-only registers: LSPC mode/timer/VRAM modulo, system latch, 68k-Z80 latches, Z80 bank and NMI enable, YM2610 registers | < 1 KB | **shadows**: core logic records each write; the stub reads and replays them |
 | Raster position, LSPC timer counter, IRQ pending | | hardware: save at a fixed raster point, or small read/load ports |
 
@@ -69,28 +71,56 @@ Offsets in the window and in the Pocket's file (68k byte order):
 | 0x0040 | 60 B | D0-D7, A0-A6 |
 | 0x007C | 4 B | USP |
 | 0x0080 | 4 B | SSP (points at the frame: PC and SR) |
-| 0x0100 | 16 B | shadows: system latch (bit n = latch n), LSPC VRAM address (after increments), modulo, mode as written, P-ROM bank, 3 spare |
+| 0x0100 | 16 B | shadows: system latch (bit n = latch n), LSPC VRAM address (after increments), modulo, mode as written, P-ROM bank, Z80 ROM banks {1, 0} and {3, 2}, {NMI enabled, command latch} |
+| 0x0120 | 2 B | WZOK: 1 if the Z80 part below was saved |
+| 0x0122 | 2 B | Z80 SP, parked in its stub |
+| 0x0124 | 2 B | Z80 NMI: bit 0 enabled, 1 line low, 2 input held low |
+| 0x0126 | 2 B | the reply latch (0x320000 read) |
+| 0x0128 | 6 B | the YM2610's timers and prescaler (jt10 `ss_q`, 40 bits) |
 | 0x1000 | 64 KB | work RAM |
 | 0x11000 | 16 KB | palette bank 0, bank 1 |
 | 0x15000 | 64 KB | slow VRAM |
 | 0x25000 | 4 KB | fast VRAM |
+| 0x26000 | 4 KB | Z80 RAM, a byte a word |
+| 0x27000 | 1 KB | the YM2610 register shadow, a byte a word |
 
 The load stub restores the system latch one bit at a time (0x3A0001 + 2n +
 0x10 x value), then the LSPC modulo, mode and VRAM address, then the P-ROM
 bank (a write to 0x2FFFF0). The shadows are read at 0xE7FF10 from
-`syslatch`, `lspc2_a2` (`SS_*` outputs) and `P_BANK`. Not yet saved: the LSPC
+`syslatch`, `lspc2_a2` (`SS_*` outputs), `P_BANK`, `zmc` (`WINDOWS`),
+`z80ctrl` (the NMI enable) and the command latch. Not yet saved: the LSPC
 timer's reload value and count, pending IRQs, the raster position (the video
-runs on through the menu), the Z80 side.
+runs on through the menu), the YM2610's sound (below).
 
 ## Z80 and YM2610
 
-- Z80: same pattern through its NMI (vector 0x0066), returning with `RETN`.
-  `LD A,I` gives the IFF2 that NMI saved. The NeoGeo's sound drivers use
-  `IM 1`; the mode is not readable and is assumed (or snooped from the `ED 56`
-  fetch). The game's own NMI (sound command) stays pending across a stub.
-- YM2610: a 512-byte shadow of every register write. On load the Z80 stub
-  writes them back (key-on last), which re-arms timers A/B; notes playing at
-  the instant of the save restart rather than continue mid-envelope.
+`ss_z80.sv` and `ssz80_stub.asm`; the header of `ss_z80.sv` has the maps.
+
+- The 68k stub asks for the Z80 (ZREQ at 0xE62000) once the picture is
+  copied. At the next fetch that starts an instruction `ss_z80` answers
+  `RST 38h` in place of the opcode (a halted Z80 gets INT instead), and from
+  then until the stub's last `RET` it answers the Z80's reads below 0x0C00
+  with the stub and a mailbox, and holds INT off. The stub pushes the
+  registers, works out IFF1 from `LD A,I`, stores SP and parks. The 68k
+  copies Z80 RAM (its second port) and the YM2610 shadow, then writes ZCMD:
+  resume, or load. A load takes the saved SP, writes the YM2610 shadow back,
+  sets the ROM banks, the reply latch and the NMI line, and both paths end
+  at the same instruction: pop, `EI`/`DI`, `RET`. The Z80 and the YM2610 run
+  through the menu's halt for this (`run_z80`, `YM_RUN`); the YM2610 is held
+  while the Z80 is parked.
+- The game's NMI (a sound command). The stub never enters while one is
+  pending or being handled (fetch at 0x0066 to `RETN`); the Z80's NMI input
+  is held where it was at entry while the stub runs, so an NMI raised
+  meanwhile is taken at the game's PC afterwards. The line's state and the
+  input's hold are saved and set again on a load.
+- YM2610: `ss_z80` keeps a 512-byte shadow of every register write. Writing
+  them back cannot set the timers' counts, so jt10 has a port for its timers
+  and prescaler (40 bits), read at the resume point of a save and set at the
+  same point of a load: the timer IRQs then come at the same Z80 cycle.
+  Notes playing at the instant of the save restart rather than continue
+  mid-envelope; ADPCM and SSG state is not saved.
+- The NeoGeo's sound drivers use `IM 1`; the mode is not readable and is
+  assumed.
 
 ## Pocket interface
 
@@ -102,7 +132,8 @@ the stub runs, then answers OK; the Pocket then reads the buffer. On "load"
 (0xA4) the Pocket has written the buffer; the core runs the load stub and
 answers OK. A stub that has not finished after 1.8 s answers error (the 68k
 held in reset, say). The CPUs are halted around all of it (`cpu_halt`,
-step 1); only the 68k runs, for the stub. To do: a header (magic, game,
+step 1); only the 68k runs, for the stub, and the Z80 and YM2610 for
+theirs. To do: a header (magic, game,
 BIOS, MVS/AES, version) checked on load.
 
 Bridge reads are pipelined (Analogue: the core "has up until the next read
@@ -122,7 +153,11 @@ hardware.
    menu's halt, the Pocket's commands and bridge (pipelined reads), the CDC,
    `cram_16bit` and a PSRAM model, every bridge word checked against the
    buffer, and the buffer scribbled over between the load and the save.
-2. The same for the Z80.
+2. The same for the Z80 (`sim/ssz80`): T80 (converted by GHDL) running
+   Metal Slug's M1 ROM, with `z80ctrl`, `zmc`, jt10 and sound commands, the
+   68k's side played by the C++. Its points save with an NMI pending, inside
+   the NMI handler and with wait states on every read. Then both CPUs
+   together in `sim/savestate`, the 68k stub driving `ss_z80`.
 3. The whole machine in MAME terms: the core's frames after a load against
    the frames after the save, and against MAME with the same inputs where it
    applies.
@@ -135,5 +170,5 @@ hardware.
 2. 68k stub + bench round trip (no hardware).
 3. Window and buffer in CRAM0, Pocket handshake, 68k-only state on hardware
    (registers + work RAM + palette + VRAM + LSPC shadows).
-4. Z80 + YM2610.
+4. Z80 + YM2610 (in both benches; hardware test pending).
 5. Cart chips (bank registers, PVC/SMA/CMC games), memory card, backup RAM.
