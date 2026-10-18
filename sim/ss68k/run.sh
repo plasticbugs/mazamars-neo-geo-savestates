@@ -34,10 +34,13 @@ else
     exit 1
 fi
 ./Vtb_ss68k "$bios" loadsave "$load_at" 0 state.bin state2.bin
-if cmp -s state.bin state2.bin; then
-    echo "PASS: saving straight after a load gives the same snapshot, byte for byte"
-else
+# Byte for byte, but for WKEEP (0x20-0x33): a load parks the game's
+# registers there in case it refuses, and a save does not write it (cmp -l
+# counts bytes from 1, in decimal)
+if cmp -l state.bin state2.bin | awk '$1 < 33 || $1 > 52' | grep -q .; then
     echo "FAIL: the snapshot after load+save differs from the original"
-    cmp -l state.bin state2.bin | head -5
+    cmp -l state.bin state2.bin | awk '$1 < 33 || $1 > 52' | head -5
     exit 1
+else
+    echo "PASS: saving straight after a load gives the same snapshot, byte for byte (but for WKEEP)"
 fi

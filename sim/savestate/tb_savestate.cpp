@@ -17,6 +17,14 @@
 //       (the Z80's to z80_load.txt).
 // loadsave: load as above, scribble over the buffer, then ask for a save
 //       with the menu still open and read it into state2.bin.
+// refuse: load at <at> as above but without the scribbling, with the ROM's
+//       NGH number (0x000108) changed during the request as another game's
+//       would be: the load must answer an error, and what follows the stub
+//       (logged as for load; the Z80's to z80_refuse.txt) must be what
+//       follows a save at the same <at>, the machine left as it was.
+// idle: open and close the menu at <at> with no request; the Z80's bus
+//       cycles after it go to z80_idle.txt, for refuse's to match (a save
+//       takes the Z80 through its stub, which moves it in time).
 //
 // SS_QUICK: never open the menu, as the Pocket's Analogue + Up and Down
 // save and load: the machine runs on but for the request itself. Every
@@ -169,7 +177,7 @@ static void write_buffer(const std::vector<uint32_t> &w) {
 static const uint32_t WD_LIMIT = 7 * 405504;
 
 // A save (load = false) or a load, the way core_bridge_cmd asks for one
-static void command(bool load) {
+static void command(bool load, bool refuse = false) {
 	r->tb_savestate__DOT__wd_max = 0;
 	const char *what = load ? "load" : "save";
 	const int slatch = r->tb_savestate__DOT__slatch;
@@ -187,7 +195,13 @@ static void command(bool load) {
 		tick74();
 		if (++t > 200000000L) { fprintf(stderr, "%s: never finished\n", what); exit(1); }
 	}
-	if (load ? m->savestate_load_err : m->savestate_start_err) { fprintf(stderr, "%s: error\n", what); exit(1); }
+	const bool err = load ? m->savestate_load_err : m->savestate_start_err;
+	if (refuse) {
+		if (!err) { fprintf(stderr, "%s: ok, where it should have refused\n", what); exit(1); }
+		fprintf(stderr, "%s: refused after %.2f ms\n", what, t * 2 * HALF_74 / 1e9);
+		return;
+	}
+	if (err) { fprintf(stderr, "%s: error\n", what); exit(1); }
 	// A save switches palette banks to copy both: it must put the game's back
 	if (!load && r->tb_savestate__DOT__slatch != slatch) {
 		fprintf(stderr, "save: system latch %02x afterwards, %02x before\n", r->tb_savestate__DOT__slatch, slatch);
@@ -310,7 +324,9 @@ int main(int argc, char **argv) {
 	if (argc < 7) { fprintf(stderr, "usage: %s bios m1rom save|load|loadsave at log state.bin [state2.bin]\n", argv[0]); return 2; }
 	const char *mode = argv[3];
 	const bool loadsave = !strcmp(mode, "loadsave");
-	const bool load = loadsave || !strcmp(mode, "load");
+	const bool refuse = !strcmp(mode, "refuse");
+	const bool idle = !strcmp(mode, "idle");
+	const bool load = loadsave || refuse || !strcmp(mode, "load");
 	if (loadsave && argc < 8) { fprintf(stderr, "loadsave needs state2.bin\n"); return 2; }
 	const long at = atol(argv[4]);
 	want = atol(argv[5]);
@@ -359,7 +375,7 @@ int main(int argc, char **argv) {
 	// With the menu, scribble over the 68k's side now and the Z80's once it
 	// halts; without it, both just before the request, so that neither CPU
 	// runs on noise for long first, which a real load never meets
-	if (load && !quick) scribble_68k();
+	if (load && !quick && !refuse) scribble_68k();
 
 	if (!quick) {
 		m->menu = 1;
@@ -370,7 +386,11 @@ int main(int argc, char **argv) {
 	}
 	fprintf(stderr, "%s: %s at bus cycle %ld\n", mode, quick ? "no menu" : "menu open", bus);
 
-	if (!load) {
+	if (idle) {
+		phase = 2;
+		zlog = true;
+	}
+	else if (!load) {
 		scribble_chip();
 		phase = 1;
 		command(false);
@@ -380,15 +400,17 @@ int main(int argc, char **argv) {
 		write_file(state, read_buffer());
 	}
 	else {
-		if (!quick) scribble_z80();
+		if (!quick && !refuse) scribble_z80();
 		write_buffer(read_file(state));
-		if (quick) {
+		if (quick && !refuse) {
 			while (!m->nAS) tick74();
 			scribble_68k();
 			scribble_z80();
 		}
+		if (refuse) r->tb_savestate__DOT__rom[0x84] ^= 1;	// the NGH number, 0x000108
 		phase = 1;
-		command(true);
+		command(true, refuse);
+		if (refuse) r->tb_savestate__DOT__rom[0x84] ^= 1;
 		dump_chip(mode);
 		phase = 2;
 		zlog = true;

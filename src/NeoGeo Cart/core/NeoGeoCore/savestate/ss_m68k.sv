@@ -9,7 +9,8 @@
 //   0xE40000-0xE4FFFF  slow VRAM, 32K words (the VRAM's second port)
 //   0xE50000-0xE5FFFF  fast VRAM, 2K words, mirrored
 //   0xE60000-0xE6FFFF  AUX: the Z80's side (ss_z80)
-//   0xE7FF00           read: {15'b0, load}.  write: the stub is finished
+//   0xE7FF00           read: {15'b0, load}.  write: the stub is finished,
+//                      bit 1: it refused the load (refused)
 //   0xE7FF10-0xE7FF1F  read: SHADOW, 8 words of write-only registers
 //   0xE7FF20-0xE7FF27  the cartridge's chip: +0 bank[23:16], +2 bank[15:0],
 //                      +4 RNG (read: neo_sma's, write: CHIP_D's), +6 read:
@@ -31,6 +32,7 @@ module ss_m68k
 	input					load,				// 0 save, 1 load; held while busy
 	output reg			busy,
 	output reg			done,				// pulse: the stub wrote CTRL
+	output reg			refused,			// with done and after: it refused the load
 	output				run,				// the CPU must run: busy, then on into the RTE
 
 	// The 68k bus, at the CPU
@@ -126,6 +128,7 @@ module ss_m68k
 		if (~nRESET) begin
 			busy <= 1'b0;
 			done <= 1'b0;
+			refused <= 1'b0;
 			tail <= 1'b0;
 			IPL7 <= 1'b0;
 			vec_pending <= 1'b0;
@@ -151,6 +154,7 @@ module ss_m68k
 			if (start & ~busy) begin
 				busy <= 1'b1;
 				IPL7 <= 1'b1;
+				refused <= 1'b0;
 			end
 
 			if (tail & ~nAS & ~region_e)
@@ -197,6 +201,7 @@ module ss_m68k
 						busy <= 1'b0;
 						tail <= 1'b1;
 						done <= 1'b1;
+						refused <= M68K_DOUT[1];
 						CHIP_LOAD <= 1'b0;
 					end
 					if (is_chip & ~M68K_RW & busy) case (M68K_ADDR[2:1])

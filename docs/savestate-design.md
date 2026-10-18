@@ -62,12 +62,17 @@ the stub writes the snapshot to a buffer and reads it back.
   Halted between the write and the RTE, a new request would be taken there,
   nested inside the stub (the bench caught this: SSP 6 bytes low).
 
-## The snapshot (v2)
+## The snapshot (v2, header version 1)
 
 Offsets in the window and in the Pocket's file (68k byte order):
 
 | Offset | Size | What |
 |---|---|---|
+| 0x0000 | 4 B | magic, "NGSS" |
+| 0x0004 | 2 B | the layout's version, 1 |
+| 0x0006 | 2 B | the game's NGH number (0x000108) |
+| 0x0008 | 4 B | checksum of the P-ROM, 0x000100-0x0010FF |
+| 0x000C | 4 B | checksum of the BIOS, 0xC00100-0xC010FF |
 | 0x0040 | 60 B | D0-D7, A0-A6 |
 | 0x007C | 4 B | USP |
 | 0x0080 | 4 B | SSP (points at the frame: PC and SR) |
@@ -166,8 +171,17 @@ the stub runs, then answers OK; the Pocket then reads the buffer. On "load"
 answers OK. A stub that has not finished after 1.8 s answers error (the 68k
 held in reset, say). The CPUs are halted around all of it (`cpu_halt`,
 step 1); only the 68k runs, for the stub, and the Z80 and YM2610 for
-theirs. To do: a header (magic, game,
-BIOS, MVS/AES, version) checked on load.
+theirs.
+
+A load checks the header first (the stub's `ident`): the magic, the
+version, and the game as the machine has it now, its NGH number and the
+checksums (each long added after rotating the sum left by one, over 4 KB
+past the 128 bytes of vectors that `nVEC` swaps between 0x000000 and
+0xC00000). If any differs, the stub refuses: it puts back the registers it
+used, writes CTRL with bit 1 set and returns, having changed nothing, and
+`savestate.sv` answers the Pocket with an error. A snapshot of another
+game, another revision of it, another BIOS, or one made before the header
+existed, is refused. Not checked: MVS or AES, and the region.
 
 Bridge reads are pipelined (Analogue: the core "has up until the next read
 strobe to drive bridge_rd_data"). Each read starts a prefetch of the next
@@ -196,6 +210,12 @@ hardware.
    save and again before the load, and must come back as the save found it.
    The BIOS never touches the PORT zone, so this checks the stub's copy, not
    a game's use of the chip.
+   Each run also loads its snapshot, at the save's point, into a machine
+   whose ROM differs by one bit at 0x000108, as another game's NGH number
+   would: the load must answer an error, the 68k's bus cycles after it must
+   be those after the save, and the Z80's those after the menu opened and
+   closed with no request (a save takes the Z80 through its stub, which
+   moves it a few cycles in time against the 68k).
 3. The whole machine in MAME terms: the core's frames after a load against
    the frames after the save, and against MAME with the same inputs where it
    applies.

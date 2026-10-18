@@ -11,6 +11,12 @@
 |       and frame), load USP, SSP and D0-A6, RTE: the CPU resumes at the
 |       saved PC with the saved SR.
 |
+| A snapshot begins with a header: a magic number, the layout's version and
+| the game's identity (its NGH number, and checksums of 4 KB of its P-ROM
+| and of the BIOS). A load whose header does not match refuses: it changes
+| nothing and writes CTRL with bit 1 set, which the Pocket is told as an
+| error.
+|
 | The cartridge's chip, by its type (CTYPE): an SMA's bank and RNG through
 | ss_m68k, loaded with one PORT-zone write and one read while CLOAD is set;
 | a PVC's 8 KB of RAM through the bus, its bank and colour registers with it
@@ -32,13 +38,18 @@
         .equ    STUB,   0xE00000        | this code
         .equ    SVRAM,  0xE40000        | slow VRAM, 32K words
         .equ    FVRAM,  0xE50000        | fast VRAM, 2K words
-        .equ    CTRL,   0xE7FF00        | read: 0 save, 1 load.  write: done
+        .equ    CTRL,   0xE7FF00        | read: 0 save, 1 load.  write: done,
+                                        |   bit 1: the load refused
         .equ    SHAD,   0xE7FF10        | shadows of write-only registers:
                                         |   +0 system latch (bit n = latch n)
                                         |   +2 LSPC VRAM address, +4 modulo,
                                         |   +6 mode as written, +8 P-ROM bank
         .equ    WIN,    0xE80000        | the window onto the savestate buffer
+        .equ    WHDR,   WIN+0x00        | magic, version, NGH, P-ROM sum, BIOS sum
+        .equ    WKEEP,  WIN+0x20        | a refused load keeps D0-D3/A0 here
         .equ    REGS,   WIN+0x40        | D0-D7, A0-A6: 60 bytes
+        .equ    MAGIC,  0x4E475353      | "NGSS"
+        .equ    VERSION, 1
         .equ    USPV,   WIN+0x7C
         .equ    SSPV,   WIN+0x80
         .equ    WSHAD,  WIN+0x100       | the 8 shadow words
@@ -90,6 +101,25 @@
         .equ    PORTZ,    0x200000
         .equ    PVCRAM,   0x2FE000
 
+        | The game's identity: D1 its NGH number, D2 a checksum of its P-ROM
+        | (0x000100-0x0010FF) and D3 one of the BIOS's (0xC00100-0xC010FF),
+        | both past the 128 bytes of vectors that nVEC swaps between them
+        .macro  ident
+        move.w  0x000108, %d1
+        moveq   #0, %d2
+        lea     0x000100, %a0
+        move.w  #0x3FF, %d0
+1:      rol.l   #1, %d2
+        add.l   (%a0)+, %d2
+        dbra    %d0, 1b
+        moveq   #0, %d3
+        lea     0xC00100, %a0
+        move.w  #0x3FF, %d0
+2:      rol.l   #1, %d3
+        add.l   (%a0)+, %d3
+        dbra    %d0, 2b
+        .endm
+
         .macro  copy src, dst, longs
         lea     \src, %a0
         lea     \dst, %a1
@@ -120,6 +150,12 @@ save:
         move.l  %usp, %a0
         move.l  %a0, USPV
         move.l  %sp, SSPV
+        ident
+        move.l  #MAGIC, WHDR
+        move.w  #VERSION, WHDR+4
+        move.w  %d1, WHDR+6
+        move.l  %d2, WHDR+8
+        move.l  %d3, WHDR+12
         copy    SHAD, WSHAD, 4
         copy    0x100000, WRAM, 0x4000
         move.b  %d0, PALBANK0
@@ -176,6 +212,23 @@ save:
         rte
 
 load:
+        movem.l %d0-%d3/%a0, WKEEP      | the game's, should the load refuse
+        ident
+        cmp.l   #MAGIC, WHDR
+        bne.s   refuse
+        cmp.w   #VERSION, WHDR+4
+        bne.s   refuse
+        cmp.w   WHDR+6, %d1
+        bne.s   refuse
+        cmp.l   WHDR+8, %d2
+        bne.s   refuse
+        cmp.l   WHDR+12, %d3
+        beq.s   1f
+refuse:
+        movem.l WKEEP, %d0-%d3/%a0
+        move.w  #3, CTRL
+        rte
+1:
         copy    WRAM, 0x100000, 0x4000
         move.b  %d0, PALBANK0
         copy    WPAL, PALRAM, 0x800

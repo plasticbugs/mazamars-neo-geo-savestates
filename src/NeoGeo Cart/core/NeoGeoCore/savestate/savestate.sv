@@ -9,7 +9,8 @@
 // halts it as the menu does, from the request until the stub is done, for a
 // save or load asked without the menu (the Pocket's Analogue + Up and Down);
 // otherwise the game cannot kick its watchdog meanwhile, which resets the
-// machine after 8 frames. run_68k overrides the CPU's halt from the request
+// machine after 8 frames. A load the stub refuses (a snapshot of another
+// game or BIOS) changes nothing and is answered as an error. run_68k overrides the CPU's halt from the request
 // until the stub's RTE has begun. The CPU then halts inside the RTE and finishes it when the
 // menu closes, or when the next request runs it. The 68k stub asks for the
 // Z80 through ss_z80, which runs the Z80 (run_z80) and the YM2610 (YM_RUN)
@@ -119,6 +120,8 @@ module savestate
 	reg active = 1'b0, op_load = 1'b0;
 	reg req_t = 1'b0;
 	reg [2:0] done_s = 3'b000;
+	reg [1:0] refused_s = 2'b00;
+	wire refused;						// CLK_24M, set before done_t toggles
 	reg [26:0] timer;					// 1.8 s at 74.25 MHz
 	wire done_t;
 	assign hold = active;
@@ -127,6 +130,7 @@ module savestate
 		start_r <= savestate_start;
 		load_r <= savestate_load;
 		done_s <= {done_s[1:0], done_t};
+		refused_s <= {refused_s[0], refused};
 		savestate_start_ack <= 1'b0;
 		savestate_load_ack <= 1'b0;
 
@@ -167,8 +171,8 @@ module savestate
 				savestate_start_busy <= 1'b0;
 				savestate_load_busy <= 1'b0;
 				if (op_load) begin
-					savestate_load_ok <= ~&timer;
-					savestate_load_err <= &timer;
+					savestate_load_ok <= ~&timer & ~refused_s[1];
+					savestate_load_err <= &timer | refused_s[1];
 				end
 				else begin
 					savestate_start_ok <= ~&timer;
@@ -210,6 +214,7 @@ module savestate
 		.load				(load_s[1]),
 		.busy				(),
 		.done				(done),
+		.refused			(refused),
 		.run				(run),
 		.M68K_ADDR		(M68K_ADDR),
 		.nAS				(nAS),

@@ -16,6 +16,10 @@
 # hold out, and then the watchdog check fails. Every request is checked
 # against the game's watchdog.
 #
+# Every run also loads the snapshot, at the save's point, into a machine whose
+# ROM differs from the save's (refuse), which must refuse it and run on as
+# the save's run did.
+#
 # SS_CHIP=<cart_pchip> puts a cartridge chip in the PORT zone (2 PVC, 3-7
 # SMA) with its state set to noise, and requires the load to bring back what
 # the save saw.
@@ -75,6 +79,24 @@ if [ -n "$SS_CHIP" ] && [ "$SS_CHIP" != 0 ]; then
         status=1
     fi
 fi
+if [ -n "$SS_QUICK" ]; then
+    echo "(the refusal is checked with the menu only: without it the game runs on while the Pocket writes the buffer)"
+elif ./Vtb_savestate "$bios" "$m1" refuse "$save_at" "$want" state.bin > after_refuse.txt 2> refused.txt &&
+     grep -q "^load: refused" refused.txt && cmp -s after_save.txt after_refuse.txt; then
+    echo "PASS: another game's snapshot is refused; the 68k's bus cycles after it are those after the save"
+    # The Z80, which a refused load never asks for: as with no request at all
+    ./Vtb_savestate "$bios" "$m1" idle "$save_at" "$want" state.bin > /dev/null 2>&1
+    # over the refused run's cycles: the log stops when the 68k's does, and
+    # without the stub's RTE the idle run's 68k gets there a little later
+    if [ -s z80_refuse.txt ] && head -n "$(wc -l < z80_refuse.txt)" z80_idle.txt | cmp -s - z80_refuse.txt; then
+        echo "PASS: the Z80's $(wc -l < z80_refuse.txt | tr -d ' ') bus cycles after it are those after the menu with no request"
+    else echo "FAIL: the Z80 differs after the refused load"; diff z80_idle.txt z80_refuse.txt | head -4; status=1; fi
+else
+    echo "FAIL: another game's snapshot is not refused, or the machine is not left as it was"
+    grep -v "^load: \\(menu\\|no menu\\)" refused.txt | head -4
+    diff after_save.txt after_refuse.txt | head -4
+    status=1
+fi
 ./Vtb_savestate "$bios" "$m1" loadsave "$load_at" 0 state.bin state2.bin
 # Compare what the stub writes (the layout in ss68k_stub.s), but for the
 # YM2610's timers (WZYM, 0x128): they count from the load's resume to the
@@ -83,6 +105,8 @@ python3 -I - state.bin state2.bin <<'PY' || status=1
 import sys
 a, b = (open(f, "rb").read() for f in sys.argv[1:3])
 for f, x in zip(sys.argv[1:3], (a, b)):
+    if x[0:6] != b"NGSS\0\1":
+        sys.exit(f"FAIL: {f} has no header (magic NGSS, version 1)")
     if x[0x120:0x122] != b"\0\1":
         sys.exit(f"FAIL: {f} has no Z80 part (WZOK 0: the stub gave up waiting for it)")
 # The P-ROM bank's latch (shadow word 4) is unused, and not restored, when a
@@ -90,7 +114,7 @@ for f, x in zip(sys.argv[1:3], (a, b)):
 kind = int.from_bytes(a[0x130:0x132], "big")
 shadows = ((0x100, 0x110, "shadows"),) if not kind else \
           ((0x100, 0x108, "shadows"), (0x10A, 0x110, "shadows"))
-for lo, hi, what in ((0x40, 0x84, "registers"), *shadows,
+for lo, hi, what in ((0x00, 0x10, "header"), (0x40, 0x84, "registers"), *shadows,
                      (0x120, 0x128, "Z80 SP, NMI, reply"),
                      (0x1000, 0x11000, "work RAM"), (0x11000, 0x15000, "palette"),
                      (0x15000, 0x25000, "slow VRAM"), (0x25000, 0x26000, "fast VRAM"),
