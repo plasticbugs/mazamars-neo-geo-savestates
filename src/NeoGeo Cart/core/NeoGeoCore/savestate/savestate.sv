@@ -76,6 +76,10 @@ module savestate
 	output				FVRAM_WE,
 	input		[15:0]	SVRAM_Q,
 	input		[15:0]	FVRAM_Q,
+	input		[3:0]		CHIP_TYPE,		// the cartridge's chip (ss_m68k)
+	input		[39:0]	CHIP_Q,
+	output	[39:0]	CHIP_D,
+	output				CHIP_LOAD,
 
 	// The Z80 (ss_z80), CLK_4M and CLK_8M
 	input					CLK_4M,
@@ -238,7 +242,11 @@ module savestate
 		.AUX_ADDR		(aux_addr),
 		.AUX_WE			(aux_we),
 		.AUX_WDATA		(aux_wdata),
-		.AUX_Q			(aux_q)
+		.AUX_Q			(aux_q),
+		.CHIP_TYPE		(CHIP_TYPE),
+		.CHIP_Q			(CHIP_Q),
+		.CHIP_D			(CHIP_D),
+		.CHIP_LOAD		(CHIP_LOAD)
 	);
 
 	ss_z80 ss_z80(

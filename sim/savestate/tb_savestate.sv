@@ -6,6 +6,9 @@
 // the VRAMs on their second port. The Z80 side is sim/ssz80's: T80 running
 // a game's M1 ROM, with z80ctrl, zmc, Z80 RAM on a second port and jt10,
 // and the sound latches on the 68k's bus at 0x320000 as c1_regs.v has them.
+// The PORT zone (0x200000) has the cartridge chips as Neogeo.sv wires them,
+// neo_sma and neo_pvc, chosen by chip (cart_pchip), over a P2 ROM whose
+// words are made from their address.
 // The menu halts both CPUs and the YM2610 as in Neogeo.sv; the C++ side
 // plays the Pocket: core_bridge_cmd's savestate signals and the bridge.
 module tb_savestate(
@@ -14,6 +17,7 @@ module tb_savestate(
 	input					nRESET,
 	input					menu,				// osnotify_inmenu
 	input					no_hold,			// a mutant: savestates without ss_hold
+	input		[3:0]		chip,				// cart_pchip: 0 none, 2 PVC, 3-7 SMA
 
 	input					savestate_start,
 	output				savestate_start_ack,
@@ -201,6 +205,10 @@ module tb_savestate(
 		.FVRAM_WE				(fvram_we),
 		.SVRAM_Q					(svram_q),
 		.FVRAM_Q					(fvram_q),
+		.CHIP_TYPE				(chip),
+		.CHIP_Q					(chip_q),
+		.CHIP_D					(chip_d),
+		.CHIP_LOAD				(chip_load),
 		.CLK_4M					(CLK_4M),
 		.CLK_8M					(CLK_8M),
 		.Z80_nRESET				(nRESET),
@@ -297,8 +305,52 @@ module tb_savestate(
 	wire is_pal = (byte_addr[23:22] == 2'b01);
 	wire [12:0] pal_a = {slatch[7], byte_addr[12:1]};
 	wire is_icom = (byte_addr[23:17] == 7'b0011001);	// 0x320000, REG_SOUND
+	// The PORT zone, its strobes as NEO-C1 makes them
+	wire is_port = (byte_addr[23:20] == 4'h2);
+	wire nPORTOEL = ~(is_port & ~nAS & RW & ~nLDS), nPORTOEU = ~(is_port & ~nAS & RW & ~nUDS);
+	wire nPORTWEL = ~(is_port & ~nAS & ~RW & ~nLDS), nPORTWEU = ~(is_port & ~nAS & ~RW & ~nUDS);
+	wire [15:0] port_bus;
+	assign port_bus = RW ? 16'bzzzzzzzz_zzzzzzzz : FX68K_DATAOUT;
+	wire [23:0] sma_p2, pvc_p2;
+	wire [23:0] p2_addr = (chip == 4'd2) ? pvc_p2 : sma_p2;
+	wire [15:0] prom_data = p2_addr[16:1] ^ {p2_addr[23:17], p2_addr[8:0]};
+	wire [39:0] chip_q, chip_d;
+	wire chip_load;
+
+	neo_pvc PVC(
+		.nRESET(nRESET),
+		.CLK_24M(CLK_24M),
+		.ENABLE(chip == 4'd2),
+		.M68K_ADDR(ADDR[19:1]),
+		.M68K_DATA(port_bus),
+		.PROM_DATA(prom_data),
+		.nPORTOEL(nPORTOEL),
+		.nPORTOEU(nPORTOEU),
+		.nPORTWEL(nPORTWEL),
+		.nPORTWEU(nPORTWEU),
+		.P2_ADDR(pvc_p2)
+	);
+
+	neo_sma SMA(
+		.nRESET(nRESET),
+		.CLK_24M(CLK_24M),
+		.TYPE(chip[2:0]),
+		.M68K_ADDR(ADDR[19:1]),
+		.M68K_DATA(port_bus),
+		.PROM_DATA(prom_data),
+		.nPORTOEL(nPORTOEL),
+		.nPORTOEU(nPORTOEU),
+		.nPORTWEL(nPORTWEL),
+		.nPORTWEU(nPORTWEU),
+		.P2_ADDR(sma_p2),
+		.SS_LOAD(chip_load),
+		.SS_D(chip_d),
+		.SS_Q(chip_q)
+	);
+
 	wire [15:0] rd = is_rom ? rom[byte_addr[16:1]] :
 						  is_ram ? ram[byte_addr[15:1]] :
+						  is_port ? ((chip != 4'd0) ? port_bus : prom_data) :
 						  is_pal ? pal[pal_a] :
 						  is_icom ? {rep_latch, 8'hFF} : 16'hFFFF;
 

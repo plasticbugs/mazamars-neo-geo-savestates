@@ -30,8 +30,17 @@ module neo_sma
 	input         nPORTWEL, nPORTWEU,
 
 	input   [2:0] TYPE,
-	output [23:0] P2_ADDR
+	output [23:0] P2_ADDR,
+
+	// Savestates (ss68k_stub.s): {bank, rng}, and loading them while SS_LOAD
+	// is set, the bank with a write to the PORT zone and the RNG with a read.
+	// SS_LOAD and SS_D are set by the stub beforehand and held meanwhile.
+	input         SS_LOAD,
+	input  [39:0] SS_D,
+	output [39:0] SS_Q
 );
+
+assign SS_Q = {bank, rng};
 
 assign P2_ADDR = ENABLE ? bank + {M68K_ADDR,1'b0} : 24'bZ;
 
@@ -195,6 +204,7 @@ wire [5:0] kof2000_idx = {M68K_DATA[5],M68K_DATA[10],M68K_DATA[3],M68K_DATA[7],M
 reg [23:0] bank = 0;
 always @(negedge nPORTWE or negedge nRESET) begin
 	if(~nRESET) bank <= 0;
+	else if(SS_LOAD) bank <= SS_D[39:16];
 	else if(BANK_SEL) begin
 		case(TYPE)
 			3: bank <= kof99_map[kof99_idx];
@@ -211,7 +221,8 @@ always @(negedge nPORTOE or negedge nRESET) begin
 	reg rst = 0;
 	if(~nRESET) rst = 1;
 	else begin
-		if(rst) rng <= 'h2345;
+		if(SS_LOAD) rng <= SS_D[15:0];
+		else if(rst) rng <= 'h2345;
 		else rng <= {rng[14:0], rng[2] ^ rng[3] ^ rng[5] ^ rng[6] ^ rng[7] ^ rng[11] ^ rng[12] ^ rng[15]};
 		rst <= 0;
 	end

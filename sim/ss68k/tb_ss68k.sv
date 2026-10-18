@@ -92,7 +92,9 @@ module tb_ss68k(
 		.SVRAM_WE		(),
 		.FVRAM_WE		(),
 		.SVRAM_Q			(16'd0),
-		.FVRAM_Q			(16'd0)
+		.FVRAM_Q			(16'd0),
+		.CHIP_TYPE		(4'd0),				// no cartridge chip
+		.CHIP_Q			(40'd0)
 	);
 
 	wire [23:0] byte_addr = {ADDR, 1'b0};

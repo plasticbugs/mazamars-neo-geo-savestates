@@ -5,12 +5,15 @@
 // STUB_BASE, so the CPU runs the stub with the game's PC and SR stacked.
 // From then on it answers the stub's own bus cycles:
 //
-//   0xE00000-0xE3FFFF  stub code (512 words, mirrored)
+//   0xE00000-0xE3FFFF  stub code (1024 words, mirrored)
 //   0xE40000-0xE4FFFF  slow VRAM, 32K words (the VRAM's second port)
 //   0xE50000-0xE5FFFF  fast VRAM, 2K words, mirrored
 //   0xE60000-0xE6FFFF  AUX: the Z80's side (ss_z80)
 //   0xE7FF00           read: {15'b0, load}.  write: the stub is finished
 //   0xE7FF10-0xE7FF1F  read: SHADOW, 8 words of write-only registers
+//   0xE7FF20-0xE7FF27  the cartridge's chip: +0 bank[23:16], +2 bank[15:0],
+//                      +4 RNG (read: neo_sma's, write: CHIP_D's), +6 read:
+//                      the chip's type, write: CHIP_LOAD (bit 0)
 //   0xE80000-0xEFFFFF  the window: win_* requests to the savestate buffer
 //
 // It drives the CPU's inputs directly (data in, DTACK, IPL), after the rest
@@ -68,7 +71,13 @@ module ss_m68k
 	output	[15:1]	AUX_ADDR,
 	output reg			AUX_WE,
 	output	[15:0]	AUX_WDATA,
-	input		[15:0]	AUX_Q				// one clock after AUX_ADDR
+	input		[15:0]	AUX_Q,			// one clock after AUX_ADDR
+
+	// The SMA chip (neo_sma's SS_*): its state, and what to load into it
+	input		[3:0]		CHIP_TYPE,		// cart_pchip: 0 none, 2 PVC, 3-7 SMA
+	input		[39:0]	CHIP_Q,			// {bank, rng}
+	output reg [39:0]	CHIP_D,
+	output reg			CHIP_LOAD		// cleared when the stub finishes
 );
 
 	localparam [23:0] STUB_BASE = 24'hE00000;
@@ -82,6 +91,10 @@ module ss_m68k
 	wire is_ctrl	= region_e & (M68K_ADDR[19:1] == 19'h3FF80);
 	wire is_shadow	= region_e & (M68K_ADDR[19:4] == 16'h7FF1);
 	wire [15:0] shadow_q = SHADOW[{M68K_ADDR[3:1], 4'd0} +: 16];
+	wire is_chip	= region_e & (M68K_ADDR[19:4] == 16'h7FF2) & ~M68K_ADDR[3];
+	wire [15:0] chip_q = (M68K_ADDR[2:1] == 2'd0) ? {8'd0, CHIP_Q[39:32]} :
+								(M68K_ADDR[2:1] == 2'd1) ? CHIP_Q[31:16] :
+								(M68K_ADDR[2:1] == 2'd2) ? CHIP_Q[15:0] : {12'd0, CHIP_TYPE};
 
 	assign VRAM_ADDR = is_fast ? {4'd0, M68K_ADDR[11:1]} : M68K_ADDR[15:1];
 	assign VRAM_WDATA = M68K_DOUT;
@@ -107,7 +120,7 @@ module ss_m68k
 	reg [15:0] win_q;
 
 	wire [15:0] stub_q;
-	ss68k_stub_rom stub_rom(CLK, M68K_ADDR[9:1], stub_q);
+	ss68k_stub_rom stub_rom(CLK, M68K_ADDR[10:1], stub_q);
 
 	always @(posedge CLK or negedge nRESET) begin
 		if (~nRESET) begin
@@ -125,6 +138,7 @@ module ss_m68k
 			FVRAM_WE <= 1'b0;
 			AUX_WE <= 1'b0;
 			vram_wait <= 2'd0;
+			CHIP_LOAD <= 1'b0;
 		end
 		else begin
 			done <= 1'b0;
@@ -178,12 +192,19 @@ module ss_m68k
 					cyc_ready <= 1'b1;
 				end
 				else begin
-					cyc_ready <= 1'b1;			// stub, CTRL, vector, idle window
+					cyc_ready <= 1'b1;			// stub, CTRL, chip, vector, idle window
 					if (is_ctrl & ~M68K_RW & busy) begin
 						busy <= 1'b0;
 						tail <= 1'b1;
 						done <= 1'b1;
+						CHIP_LOAD <= 1'b0;
 					end
+					if (is_chip & ~M68K_RW & busy) case (M68K_ADDR[2:1])
+						2'd0: CHIP_D[39:32] <= M68K_DOUT[7:0];
+						2'd1: CHIP_D[31:16] <= M68K_DOUT;
+						2'd2: CHIP_D[15:0] <= M68K_DOUT;
+						2'd3: CHIP_LOAD <= M68K_DOUT[0];
+					endcase
 				end
 			end
 			else if (cyc_started & ~cyc_ready & win_ack) begin
@@ -206,6 +227,7 @@ module ss_m68k
 	assign DIN = is_vec ? (M68K_ADDR[1] ? STUB_BASE[15:0] : {8'h00, STUB_BASE[23:16]}) :
 					 is_ctrl ? {15'd0, load} :
 					 is_shadow ? shadow_q :
+					 is_chip ? chip_q :
 					 is_stub ? stub_q :
 					 (is_vram | is_aux) ? vram_q :
 					 is_win ? win_q :

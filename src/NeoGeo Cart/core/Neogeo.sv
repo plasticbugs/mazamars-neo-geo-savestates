@@ -397,6 +397,8 @@ wire [1:0]	ss_be;
 wire [15:0]	ss_lspc_vram_addr, ss_lspc_vrammod, ss_lspc_mode;
 wire [14:0]	ss_vram_addr;
 wire [15:0]	ss_vram_wdata, ss_svram_q, ss_fvram_q;
+wire [39:0]	ss_chip_q, ss_chip_d;			// the SMA chip's {bank, rng}
+wire			ss_chip_load;
 wire			ss_svram_we, ss_fvram_we;
 wire			ss_z80_sdw, ss_z80_nmi_n, ss_z80_din_en, ss_z80_int_force, ss_z80_int_mask;
 wire			ss_run_z80, ss_ym_run, ss_ym_load;
@@ -1016,6 +1018,10 @@ savestate savestate(
 	.FVRAM_WE				(ss_fvram_we),
 	.SVRAM_Q					(ss_svram_q),
 	.FVRAM_Q					(ss_fvram_q),
+	.CHIP_TYPE				(cart_pchip),
+	.CHIP_Q					(ss_chip_q),
+	.CHIP_D					(ss_chip_d),
+	.CHIP_LOAD				(ss_chip_load),
 	.CLK_4M					(CLK_4M),
 	.CLK_8M					(CLK_8M),
 	.Z80_nRESET				(nRESET_WD),		// Z80_nRESET
@@ -1101,7 +1107,10 @@ neo_sma neo_sma
 	.nPORTOEU(nPORTOEU),
 	.nPORTWEL(nPORTWEL),
 	.nPORTWEU(nPORTWEU),
-	.P2_ADDR(P2ROM_ADDR)
+	.P2_ADDR(P2ROM_ADDR),
+	.SS_LOAD(ss_chip_load),
+	.SS_D(ss_chip_d),
+	.SS_Q(ss_chip_q)
 );
 
 // Memory card

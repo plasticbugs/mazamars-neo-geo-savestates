@@ -22,6 +22,9 @@
 // save and load: the machine runs on but for the request itself. Every
 // request must leave the game's watchdog (8 frames) unexpired.
 // SS_NO_HOLD: the bench without savestate.sv's hold, to show it matters.
+// SS_CHIP=<cart_pchip>: a cartridge chip in the PORT zone (2 PVC, 3-7 SMA),
+// its state set to noise before the save and again before the load; its
+// state after each request goes to chip_<mode>.txt.
 //
 // Bridge reads are pipelined, as Analogue documents them: the data for a
 // read strobe is taken at the next transaction, just before its strobe.
@@ -220,6 +223,8 @@ static std::vector<uint32_t> read_file(const char *name) {
 static uint32_t x = 0x12345678;
 static uint32_t noise() { x ^= x << 13; x ^= x >> 17; x ^= x << 5; return x; }
 
+static void scribble_chip();
+
 // Before a load: what the stubs restore, to noise
 static void scribble_68k() {
 	for (int i = 0; i < 32768; i++) r->tb_savestate__DOT__ram[i] = noise();
@@ -237,6 +242,57 @@ static void scribble_68k() {
 	r->tb_savestate__DOT__vrammod = noise();
 	r->tb_savestate__DOT__lspcmode = noise();
 	r->tb_savestate__DOT__p_bank = noise() & 15;
+	scribble_chip();
+}
+
+// The cartridge chip's state to noise. The PVC's port registers are what
+// the last writes to their ports left in its RAM, as on the chip, but for
+// the bank, which reads back as itself
+static int chip = 0;
+static void scribble_chip() {
+	if (chip >= 3) {
+		r->tb_savestate__DOT__SMA__DOT__bank = noise() & 0xFFFFFF;
+		r->tb_savestate__DOT__SMA__DOT__rng = noise();
+	}
+	else if (chip == 2) {
+		auto &lo = r->tb_savestate__DOT__PVC__DOT__RAML__DOT__mem;
+		auto &hi = r->tb_savestate__DOT__PVC__DOT__RAMU__DOT__mem;
+		for (int i = 0; i < 4096; i++) { uint32_t v = noise(); lo[i] = v; hi[i] = v >> 8; }
+		auto word = [&](int port) { return (unsigned)hi[0xFF0 + port] << 8 | lo[0xFF0 + port]; };
+		unsigned w = word(0), a = word(4), b = word(5);
+		r->tb_savestate__DOT__PVC__DOT__ub = (w & 15) << 1 | (w >> 12 & 1);
+		r->tb_savestate__DOT__PVC__DOT__ug = (w >> 4 & 15) << 1 | (w >> 13 & 1);
+		r->tb_savestate__DOT__PVC__DOT__ur = (w >> 8 & 15) << 1 | (w >> 14 & 1);
+		r->tb_savestate__DOT__PVC__DOT__us = w >> 15 & 1;
+		r->tb_savestate__DOT__PVC__DOT__pcol = (b >> 8 & 1) << 15 | (b & 1) << 14 | (a >> 8 & 1) << 13 |
+			(a & 1) << 12 | (b >> 1 & 15) << 8 | (a >> 9 & 15) << 4 | (a >> 1 & 15);
+		r->tb_savestate__DOT__PVC__DOT__bank = noise() & 0x7FFFFE;
+	}
+}
+
+// What the chip holds, but for the PVC's RAM under the ports that read
+// back other than it (1, 2, 6, 8, 9), which nothing can see
+static void dump_chip(const char *mode) {
+	if (!chip) return;
+	char name[64];
+	snprintf(name, sizeof name, "chip_%s.txt", mode);
+	FILE *f = fopen(name, "w");
+	if (chip >= 3)
+		fprintf(f, "sma bank %06x rng %04x\n", r->tb_savestate__DOT__SMA__DOT__bank,
+				  r->tb_savestate__DOT__SMA__DOT__rng);
+	else {
+		fprintf(f, "pvc bank %06x r %02x g %02x b %02x s %x pcol %04x\n", r->tb_savestate__DOT__PVC__DOT__bank,
+				  r->tb_savestate__DOT__PVC__DOT__ur, r->tb_savestate__DOT__PVC__DOT__ug,
+				  r->tb_savestate__DOT__PVC__DOT__ub, r->tb_savestate__DOT__PVC__DOT__us,
+				  r->tb_savestate__DOT__PVC__DOT__pcol);
+		for (int i = 0; i < 4096; i++) {
+			int port = i - 0xFF0;
+			if (port == 1 || port == 2 || port == 6 || port == 8 || port == 9) continue;
+			fprintf(f, "%03x %02x%02x\n", i, r->tb_savestate__DOT__PVC__DOT__RAMU__DOT__mem[i],
+					  r->tb_savestate__DOT__PVC__DOT__RAML__DOT__mem[i]);
+		}
+	}
+	fclose(f);
 }
 
 static void scribble_z80() {
@@ -290,6 +346,8 @@ int main(int argc, char **argv) {
 	// act on the edge here, though on the chip they follow the level
 	const bool quick = getenv("SS_QUICK") != nullptr;
 	m->no_hold = getenv("SS_NO_HOLD") != nullptr;
+	if (getenv("SS_CHIP")) chip = atoi(getenv("SS_CHIP"));
+	m->chip = chip;
 	m->nRESET = 1; m->menu = 0; m->clk_74a = 0; m->clk_sys = 0;
 	for (int i = 0; i < 20; i++) tick74();
 	m->nRESET = 0;
@@ -313,8 +371,10 @@ int main(int argc, char **argv) {
 	fprintf(stderr, "%s: %s at bus cycle %ld\n", mode, quick ? "no menu" : "menu open", bus);
 
 	if (!load) {
+		scribble_chip();
 		phase = 1;
 		command(false);
+		dump_chip(mode);
 		phase = 2;
 		zlog = true;
 		write_file(state, read_buffer());
@@ -329,6 +389,7 @@ int main(int argc, char **argv) {
 		}
 		phase = 1;
 		command(true);
+		dump_chip(mode);
 		phase = 2;
 		zlog = true;
 		if (loadsave) {

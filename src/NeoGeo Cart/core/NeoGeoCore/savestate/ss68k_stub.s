@@ -11,6 +11,13 @@
 |       and frame), load USP, SSP and D0-A6, RTE: the CPU resumes at the
 |       saved PC with the saved SR.
 |
+| The cartridge's chip, by its type (CTYPE): an SMA's bank and RNG through
+| ss_m68k, loaded with one PORT-zone write and one read while CLOAD is set;
+| a PVC's 8 KB of RAM through the bus, its bank and colour registers with it
+| (its top 32 bytes: each port reads back what was written to it, or what
+| writing it back restores). Without a chip, the P-ROM bank; a snapshot of
+| another kind of chip restores none.
+|
 | The Z80 (ss_z80.sv, ssz80_stub.asm): ask for it (ZREQ), wait until it
 | parks, copy its RAM and the YM2610 shadow out or in, tell it to resume or
 | load, wait until it leaves its stub. Every wait gives up after ~0.1 s; a
@@ -46,6 +53,16 @@
         .equ    WZYM,   WIN+0x128       | the YM2610's timers, 3 words
         .equ    WZRAM,  WIN+0x26000     | Z80 RAM, a byte a word, 4 KB
         .equ    WYM,    WIN+0x27000     | the YM2610 shadow, a byte a word, 1 KB
+        .equ    WCHIP,  WIN+0x130       | the chip's type, then the SMA's bank
+                                        | (2 words) and RNG
+        .equ    WPVC,   WIN+0x28000     | the PVC's RAM, 8 KB
+
+        | ss_m68k's chip block, for neo_sma
+        .equ    CBANKH, 0xE7FF20
+        .equ    CBANKL, 0xE7FF22
+        .equ    CRNG,   0xE7FF24
+        .equ    CTYPE,  0xE7FF26        | read: 0 none, 2 PVC, 3-7 SMA.  write: CLOAD
+        .equ    CLOAD,  0xE7FF26
 
         | ss_z80's AUX port: the shadow words 5-7 are its ROM banks {1,0},
         | {3,2} and {NMI enable, command latch}
@@ -70,6 +87,8 @@
         .equ    VRAMMOD,  0x3C0004
         .equ    LSPCMODE, 0x3C0006
         .equ    PBANK,    0x2FFFF0
+        .equ    PORTZ,    0x200000
+        .equ    PVCRAM,   0x2FE000
 
         .macro  copy src, dst, longs
         lea     \src, %a0
@@ -112,6 +131,18 @@ save:
         move.b  %d0, PALBANK0
 2:      copy    SVRAM, WSVRAM, 0x4000
         copy    FVRAM, WFVRAM, 0x400
+
+        move.w  CTYPE, %d0              | the cartridge's chip
+        move.w  %d0, WCHIP
+        cmp.w   #2, %d0
+        blo.s   7f
+        bne.s   6f
+        copy    PVCRAM, WPVC, 0x800
+        bra.s   7f
+6:      move.w  CBANKH, WCHIP+2
+        move.w  CBANKL, WCHIP+4
+        move.w  CRNG, WCHIP+6
+7:
 
         clr.w   WZOK                    | the Z80, after the shadows (its NMI enable)
         move.w  #1, ZSTAT
@@ -165,7 +196,25 @@ load:
         move.w  WSHAD+4, VRAMMOD
         move.w  WSHAD+6, LSPCMODE
         move.w  WSHAD+2, VRAMADDR
-        move.w  WSHAD+8, PBANK
+
+        move.w  CTYPE, %d0              | the cartridge's chip
+        bne.s   6f
+        move.w  WSHAD+8, PBANK          | none: the P-ROM bank
+        bra.s   8f
+6:      cmp.w   WCHIP, %d0
+        bne.s   8f                      | a snapshot from another kind of chip
+        cmp.w   #2, %d0
+        bne.s   7f
+        copy    WPVC, PVCRAM, 0x800
+        bra.s   8f
+7:      move.w  WCHIP+2, CBANKH
+        move.w  WCHIP+4, CBANKL
+        move.w  WCHIP+6, CRNG
+        move.w  #1, CLOAD
+        move.w  %d0, PORTZ              | the bank
+        tst.w   PORTZ                   | the RNG
+        move.w  #0, CLOAD
+8:
 
         tst.w   WZOK                    | the Z80, if the snapshot has it
         beq     9f

@@ -77,12 +77,15 @@ Offsets in the window and in the Pocket's file (68k byte order):
 | 0x0124 | 2 B | Z80 NMI: bit 0 enabled, 1 line low, 2 input held low |
 | 0x0126 | 2 B | the reply latch (0x320000 read) |
 | 0x0128 | 6 B | the YM2610's timers and prescaler (jt10 `ss_q`, 40 bits) |
+| 0x0130 | 2 B | the cartridge's chip: 0 none, 2 PVC, 3-7 SMA (`cart_pchip`) |
+| 0x0132 | 6 B | SMA: bank (2 words), RNG |
 | 0x1000 | 64 KB | work RAM |
 | 0x11000 | 16 KB | palette bank 0, bank 1 |
 | 0x15000 | 64 KB | slow VRAM |
 | 0x25000 | 4 KB | fast VRAM |
 | 0x26000 | 4 KB | Z80 RAM, a byte a word |
 | 0x27000 | 1 KB | the YM2610 register shadow, a byte a word |
+| 0x28000 | 8 KB | PVC: its RAM, 0x2FE000-0x2FFFFF, ports included |
 
 The load stub restores the system latch one bit at a time (0x3A0001 + 2n +
 0x10 x value), then the LSPC modulo, mode and VRAM address, then the P-ROM
@@ -91,6 +94,36 @@ bank (a write to 0x2FFFF0). The shadows are read at 0xE7FF10 from
 `z80ctrl` (the NMI enable) and the command latch. Not yet saved: the LSPC
 timer's reload value and count, pending IRQs, the raster position (the video
 runs on through the menu), the YM2610's sound (below).
+
+### Cartridge chips
+
+The stub reads the chip's type at 0xE7FF26 (`cart_pchip`) and saves what
+that chip holds:
+
+- **None:** the P-ROM bank, written back to 0x2FFFF0. Only these carts get
+  that write: on KOF '99 0x2FFFF0 is the SMA's bank register, and on a PVC it
+  is port 8, the bank's low byte.
+- **SMA** (KOF '99, Garou, Metal Slug 3, KOF 2000): the P-ROM bank (24 bits,
+  set by a scrambled write the stub cannot invert) and the RNG (16 bits,
+  stepped by every read of the PORT zone). `neo_sma` shows both on `SS_Q`,
+  read at 0xE7FF20-25. To load, the stub writes them to `CHIP_D` (the same
+  addresses), sets `CHIP_LOAD` (0xE7FF26), writes the PORT zone once (the
+  bank) and reads it once (the RNG), and clears `CHIP_LOAD`. Both registers
+  stay in their own clocks (the strobes' edges); `CHIP_LOAD` and `CHIP_D`
+  are set beforehand and held, so they are only a multiplexer on each D
+  input. The stub reads the PORT zone nowhere else, so a save leaves the RNG
+  where it was.
+- **PVC** (Metal Slug 5, SNK vs. Capcom, KOF 2003): none of its state needs
+  a port. Its 8 KB of RAM is copied through the bus both ways, and the top
+  32 bytes carry the registers with it: ports 0, 4 and 5 read the RAM that
+  their last writes left, and writing that back sets the colour registers
+  again; ports 8 and 9 read the bank, and writing it back sets it. Ports 1,
+  2 and 6 have no effect on a write. The RAM under ports 1, 2, 6, 8 and 9
+  ends up holding the ports' values, which no read can see.
+
+A snapshot whose chip type is not the cartridge's restores no chip state.
+PRO-CT0 (Fatal Fury 2, Super Sidekicks) is not saved: its shift register
+lives only through one protection check, a few consecutive writes and a read.
 
 ## Z80 and YM2610
 
@@ -158,6 +191,11 @@ hardware.
    68k's side played by the C++. Its points save with an NMI pending, inside
    the NMI handler and with wait states on every read. Then both CPUs
    together in `sim/savestate`, the 68k stub driving `ss_z80`.
+   With `SS_CHIP` the bench's PORT zone has `neo_sma` or `neo_pvc` over a
+   P2 ROM made from its addresses; their state is set to noise before the
+   save and again before the load, and must come back as the save found it.
+   The BIOS never touches the PORT zone, so this checks the stub's copy, not
+   a game's use of the chip.
 3. The whole machine in MAME terms: the core's frames after a load against
    the frames after the save, and against MAME with the same inputs where it
    applies.
@@ -171,4 +209,5 @@ hardware.
 3. Window and buffer in CRAM0, Pocket handshake, 68k-only state on hardware
    (registers + work RAM + palette + VRAM + LSPC shadows).
 4. Z80 + YM2610 (in both benches; hardware test pending).
-5. Cart chips (bank registers, PVC/SMA/CMC games), memory card, backup RAM.
+5. Cart chips: SMA and PVC (in `sim/savestate`, `SS_CHIP`; hardware test
+   pending). Then memory card, backup RAM.
