@@ -2,7 +2,7 @@
 
 This is the port of the Neogeo Core made by [Furrtek](https://www.patreon.com/furrtek/posts) to the Analogue Pocket using the APF framework and some of my own code.
 
-## Savestates (this fork, 0.8.1-savestates.1)
+## Savestates (this fork, 0.8.1-savestates.2)
 
 This fork of [Mazamars312's core](https://github.com/Mazamars312/Analogue_Pocket_Neogeo) adds
 save states (Pocket Memories) and a pause while the Pocket's menu is open. Save with
@@ -10,14 +10,21 @@ Analogue + Up, load with Analogue + Down. The game freezes for about a tenth of 
 while a state is made.
 
 A state holds the 68000 (registers, work RAM), the picture (palette, both VRAMs, the system
-latch, the LSPC's registers), the P-ROM bank, and the Z80 side (registers, RAM, ROM banks,
-NMI, the sound latches, the YM2610's registers and timers).
+latch, the LSPC's registers), the P-ROM bank, the Z80 side (registers, RAM, ROM banks, NMI,
+the sound latches, the YM2610's registers and timers), and the cartridge's protection chip:
+the SMA's bank and random numbers (KOF '99, Garou, Metal Slug 3, KOF 2000) or the PVC's RAM
+and registers (Metal Slug 5, SNK vs. Capcom, KOF 2003).
 
-- Tested on hardware: Metal Slug.
-- Not saved yet: the extra chips of SMA and PVC cartridges (KOF '99, KOF 2000, Garou, Metal
-  Slug 3; Metal Slug 5, SNK vs. Capcom, KOF 2003), so loading in those games is likely to
-  fail; the LSPC timer (raster effects may be wrong for a frame or two after a load);
-  ADPCM and SSG sound (notes and samples playing at the save restart).
+Each state records the game and BIOS it came from. Loading a state from another game, another
+version of the game or another BIOS is refused ("Load failed") and the game carries on.
+States made with 0.8.1-savestates.1 are refused for the same reason: make new ones.
+
+- Tested on hardware: Metal Slug (savestates.1). The chip support and the game check are
+  tested in simulation.
+- Not saved yet: the LSPC timer (raster effects may be wrong for a frame or two after a
+  load); ADPCM and SSG sound (notes and samples playing at the save restart); the PRO-CT0
+  protection chip of Fatal Fury 2 and Super Sidekicks, which holds state only during a
+  check.
 - Backup RAM and the memory card are not part of a state.
 
 The design and how it is checked in simulation: [docs/savestate-design.md](docs/savestate-design.md).
