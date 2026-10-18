@@ -11,6 +11,11 @@
 # the BIOS alone, whose sound commands reach it. ROM data is not in the
 # repository.
 #
+# SS_QUICK=1 saves and loads without the menu, as Analogue + Up and Down do
+# (the game runs on but for the request); SS_NO_HOLD=1 takes savestate.sv's
+# hold out, and then the watchdog check fails. Every request is checked
+# against the game's watchdog.
+#
 # BRIDGE_GAP=<clk_74a cycles> sets how fast the Pocket's bridge transactions
 # come (default 40, about 0.6 us a word, faster than "a few megabytes per
 # second").

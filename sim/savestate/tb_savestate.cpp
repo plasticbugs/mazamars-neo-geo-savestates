@@ -44,7 +44,7 @@ static const uint64_t HALF_74 = 6734, HALF_SYS = 5174;
 static uint64_t now = 0, next_74 = HALF_74, next_sys = HALF_SYS;
 
 // Bus monitor
-static long bus = 0, logged = 0;
+static long bus = 0, logged = 0, want = 0;	// the bus cycles to log
 static int prev_as = 1, phase = 0;		// 0 before, 1 command, 2 stub done, 3 logging
 static uint32_t t0 = 0, t_start = 0, addr = 0;
 static int rw = 1;
@@ -56,7 +56,7 @@ static void monitor() {
 	if (!prev_as && m->nAS) {
 		bus++;
 		if (phase == 2 && (addr >> 20) != 0xE) { phase = 3; t0 = t_start; }
-		if (phase == 3) {
+		if (phase == 3 && logged < want) {
 			printf("%10u %06x %c %04x\n", t_start - t0, addr, rw ? 'R' : 'W', data);
 			logged++;
 		}
@@ -82,7 +82,7 @@ static void zmonitor() {
 		zkind[0] = !m->nMREQ ? (!m->nM1 ? 'F' : 'M') : !m->nIORQ ? 'I' : '?';
 		zkind[1] = m->nRD ? 'W' : 'R';
 	}
-	if (!zprev && strobe && zlog && ztrace) {
+	if (!zprev && strobe && zlog && ztrace && logged < want) {	// over the same time
 		if (!zlogged++) zt0 = m->Z80_TIME;
 		fprintf(ztrace, "%10u %c%c %04x %02x\n", m->Z80_TIME - zt0, zkind[0], zkind[1], za, zd);
 	}
@@ -256,7 +256,8 @@ int main(int argc, char **argv) {
 	const bool loadsave = !strcmp(mode, "loadsave");
 	const bool load = loadsave || !strcmp(mode, "load");
 	if (loadsave && argc < 8) { fprintf(stderr, "loadsave needs state2.bin\n"); return 2; }
-	const long at = atol(argv[4]), want = atol(argv[5]);
+	const long at = atol(argv[4]);
+	want = atol(argv[5]);
 	const char *state = argv[6], *state2 = argv[7];
 	if (getenv("BRIDGE_GAP")) gap = atoi(getenv("BRIDGE_GAP"));
 
